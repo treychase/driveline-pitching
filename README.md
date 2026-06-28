@@ -176,17 +176,24 @@ for row in trained.model.coef_summary(trained.dataset.feature_names)[:10]:
 > they summarise. Pitchers are a mix of left- and right-handed; the model uses
 > biomechanics magnitudes and is not mirrored by handedness.
 
-## Live force plates + interactive dashboard with a glossary tab
+## Interactive dashboard (white/orange) with a glossary tab
 
-`dashboard_html.py` builds a **self-contained interactive HTML dashboard** with
-two tabs:
+`dashboard_html.py` builds a **self-contained interactive HTML dashboard**,
+styled with a **white & orange** theme (`theme.py`), with two tabs:
 
-* **Live delivery** — a Plotly animation of the 3D pose on the dirt mound with a
-  Play button and a frame slider. Scrubbing the delivery drives a synchronized
-  **live ground-reaction-force** plot of the lead vs. rear leg (labelled by the
-  pitcher's actual **L/R** legs via handedness), with a moving time cursor and
-  event markers (foot plant, MER, ball release). The velocity gauge and
-  colour-coded z-scores sit alongside.
+* **Live delivery** — a **pitch picker** selects the delivery. A Plotly animation
+  shows the 3D pose on the dirt mound with a Play button, a frame slider, and a
+  **toggle for joint velocity vectors** on every joint (orange arrows from the
+  joint centres, computed from the landmark data). Scrubbing the delivery drives:
+  * a synchronized **live ground-reaction-force** plot of the lead vs. rear leg
+    (labelled by the pitcher's actual **L/R** legs via handedness), with the
+    delivery **phases shaded** (wind-up, stride, arm cocking, acceleration,
+    deceleration) and a moving time cursor;
+  * two **foot-vGRF squares** (L/R) that show each foot's force every frame and
+    **flash red ("◀ MAX") at that foot's peak**;
+  * the Bayesian-Lasso **velocity gauge**, the **biomechanics z-scores**, the
+    **joint work accumulated** during the delivery, and the **z-scores of joint
+    work** (energy generated) for the selected pitch.
 * **Glossary** — a searchable table with **full explanations of every
   biomechanics variable**, plus the delivery events and coordinate/force
   conventions, sourced from the OBP documentation.
@@ -195,37 +202,48 @@ two tabs:
 ![Glossary tab](examples/dashboard_html_glossary.png)
 
 ```bash
-# Build the interactive dashboard (Plotly from CDN; needs internet to view)
-python dashboard_html.py --pitch 1097_1 --out dashboard.html
+# Build with the default pitch picker (Plotly from CDN; needs internet to view)
+python dashboard_html.py --out dashboard.html
+
+# Choose the pitches in the picker
+python dashboard_html.py --pitches 1097_1,1031_2,1031_3 --out dashboard.html
 
 # Fully self-contained / offline (embeds Plotly.js, larger file)
-python dashboard_html.py --pitch 1097_1 --offline --out dashboard.html
+python dashboard_html.py --offline --out dashboard.html
 ```
 
-The animated **matplotlib** dashboard (`dashboard.py`) also gained a live
-force-plate panel: lead/rear vertical GRF traces with a moving cursor and an
-L/R bar gauge that updates frame-by-frame next to the pose animation.
+The animated **matplotlib** dashboard (`dashboard.py`) carries the same white/
+orange theme and the same live force panel: phase-shaded lead/rear GRF traces
+with a moving cursor plus the two color-changing L/R foot squares next to the
+pose animation.
 
-### Force plates and the glossary as modules
+### Joint work, force plates, and the glossary as modules
 
 ```python
-import force_plate, glossary
+import force_plate, glossary, joint_kinetics
 
-# Per-pitch ground reaction forces, aligned to the C3D marker frames
+# Per-pitch ground reaction forces + delivery phases, aligned to the C3D frames
 trace = force_plate.load_force_plate("1097_1", bodyweight_n=76 * 9.81)
 aligned = trace.align_to_frames(frame_times)   # rear/lead vertical & magnitude per frame
-aligned["event_frames"]                         # {'fp': 298, 'br': 361, ...}
+force_plate.delivery_phases(trace.events, t_end=1.2)   # wind-up → deceleration spans
+
+# Joint work (net energy generated, J), z-scores, and joint velocity vectors
+jw = joint_kinetics.load_joint_work("1097_1")          # cumulative work per joint
+jw.work_at_release()                                    # {'shoulder': 980, 'elbow': -742, ...}
+joint_kinetics.work_zscores("1097_1")                   # z-scores vs the dataset
+joint_kinetics.load_joint_vectors("1097_1", frame_times)  # joint-centre velocity vectors
 
 # Glossary of every variable (definition, units, event, category)
 glossary.lookup("elbow_varus_moment").definition
-df = glossary.as_dataframe()                     # all 81 variables as a table
-open("GLOSSARY.md", "w").write(glossary.render_markdown())
+glossary.as_dataframe()                                 # all 81 variables as a table
 ```
 
-The force-plate series (`rear_force_*`, `lead_force_*`) come from the OBP
-`full_sig/force_plate.zip` (~1080 Hz) and share the C3D clock, so they align to
-the pose by simple time interpolation. A full text glossary is also rendered to
-[`GLOSSARY.md`](GLOSSARY.md).
+Force plates (`rear_force_*`, `lead_force_*`, ~1080 Hz) come from
+`full_sig/force_plate.zip`; joint work uses OBP's authoritative
+`<joint>_energy_generated` from `full_sig/energy_flow.zip`; joint-centre velocity
+vectors are finite-differenced from `full_sig/landmarks.zip`. All share the C3D
+clock, so they align to the pose by time interpolation. A full text glossary is
+also rendered to [`GLOSSARY.md`](GLOSSARY.md).
 
 ## Data & license
 

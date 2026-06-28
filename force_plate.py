@@ -161,3 +161,34 @@ def load_force_plate(
 
 def event_label(key: str) -> str:
     return _EVENT_LABELS.get(key, key)
+
+
+# Light, distinct phase tints (readable behind the GRF traces on a white theme).
+_PHASE_SEQ = [
+    ("Wind-up", "pkh", "#e3e8ee"),
+    ("Stride", "fp", "#d9ecdc"),
+    ("Arm cocking", "mer", "#fdf0c9"),
+    ("Acceleration", "br", "#ffd9b3"),
+]
+_PHASE_FINAL = ("Deceleration", "#f3d4d4")
+
+
+def delivery_phases(events: dict, t_end: float) -> list[dict]:
+    """Return the distinct delivery phases as ``{label, t0, t1, color}`` spans.
+
+    Phases are delimited by the standard events: Wind-up (start→peak knee
+    height), Stride (→foot plant), Arm cocking (→max external rotation),
+    Acceleration (→ball release), and Deceleration/follow-through (→end).
+    Phases whose bounding event is missing are skipped.
+    """
+    phases, prev = [], 0.0
+    for label, ev, color in _PHASE_SEQ:
+        t = events.get(ev)
+        if t is None or not np.isfinite(t) or t <= prev:
+            continue
+        phases.append({"label": label, "t0": prev, "t1": float(t), "color": color})
+        prev = float(t)
+    if t_end > prev:
+        label, color = _PHASE_FINAL
+        phases.append({"label": label, "t0": prev, "t1": float(t_end), "color": color})
+    return phases

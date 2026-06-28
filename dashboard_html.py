@@ -33,6 +33,24 @@ from velocity_model import train_velocity_model
 _LEAD_C, _REAR_C = theme.SERIES_A, theme.SERIES_B
 _DIRT_SCALE = [[0.0, "#5b3a1e"], [0.5, "#8a5a30"], [1.0, "#b9854f"]]
 _VEC_SCALE = 0.03   # metres drawn per (m/s) of joint velocity
+_FOOT_STOPS = [(0.0, (255, 247, 239)), (0.5, (255, 176, 102)), (1.0, (255, 122, 0))]
+_FOOT_MAX_RGB = (214, 39, 39)   # red flash when a foot is at its peak force
+
+
+def _foot_state(val, peak, unit):
+    """Square colour, text colour, and label for a foot's current force."""
+    frac = float(np.clip(val / peak, 0, 1)) if peak > 0 else 0.0
+    if peak > 0 and val >= 0.99 * peak:
+        return ("rgb(214,39,39)", "white", f"<b>{val:.2f}</b><br>◀ MAX")
+    for (f0, c0), (f1, c1) in zip(_FOOT_STOPS, _FOOT_STOPS[1:]):
+        if frac <= f1:
+            a = (frac - f0) / (f1 - f0) if f1 > f0 else 0
+            rgb = tuple(int(c0[k] + a * (c1[k] - c0[k])) for k in range(3))
+            break
+    else:
+        rgb = _FOOT_STOPS[-1][1]
+    tcol = "white" if frac > 0.5 else theme.SLATE
+    return (f"rgb{rgb}", tcol, f"<b>{val:.2f}</b><br>{unit}")
 
 
 def _seg_coords(coords, pairs):
@@ -83,9 +101,10 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         ymax = 1.0
 
     fig = make_subplots(
-        rows=1, cols=2, column_widths=[0.62, 0.38],
-        specs=[[{"type": "scene"}, {"type": "xy"}]],
-        subplot_titles=("3D delivery on the mound", f"Live vertical GRF ({unit})"),
+        rows=1, cols=3, column_widths=[0.55, 0.33, 0.12],
+        specs=[[{"type": "scene"}, {"type": "xy"}, {"type": "xy"}]],
+        subplot_titles=("3D delivery on the mound", f"Live vertical GRF ({unit})",
+                        "Foot vGRF"),
         horizontal_spacing=0.04,
     )
 
@@ -132,23 +151,47 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.add_trace(go.Scatter3d(x=tx, y=ty, z=tz, mode="markers",
                                marker=dict(size=3, color=theme.ORANGE),
                                showlegend=False, hoverinfo="skip"), row=1, col=1)
+    # 10,11: foot-vGRF squares (lead on top, rear below) in the third subplot
+    lc, ltc, ltxt = _foot_state(lead[f0], float(np.nanmax(lead)), unit)
+    rc, rtc, rtxt = _foot_state(rear[f0], float(np.nanmax(rear)), unit)
+    fig.add_trace(go.Scatter(x=[0.5], y=[0.70], mode="markers+text",
+                             marker=dict(symbol="square", size=64, color=lc,
+                                         line=dict(color="#888", width=1)),
+                             text=[ltxt], textfont=dict(color=ltc, size=12),
+                             textposition="middle center", showlegend=False,
+                             hoverinfo="skip"), row=1, col=3)
+    fig.add_trace(go.Scatter(x=[0.5], y=[0.28], mode="markers+text",
+                             marker=dict(symbol="square", size=64, color=rc,
+                                         line=dict(color="#888", width=1)),
+                             text=[rtxt], textfont=dict(color=rtc, size=12),
+                             textposition="middle center", showlegend=False,
+                             hoverinfo="skip"), row=1, col=3)
 
-    # event lines on the force subplot
+    # event lines + shaded delivery phases on the force subplot
     xa = fig.data[3].xaxis or "x"
     ya = fig.data[3].yaxis or "y"
     if fp is not None:
-        for key, color in [("fp", "#888"), ("mer", "#bbb"), ("br", theme.ORANGE_DARK)]:
+        import force_plate as _fp
+        ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
+                    if fr < len(frame_times)}
+        for ph in _fp.delivery_phases(ev_times, float(frame_times[-1])):
+            fig.add_shape(type="rect", x0=ph["t0"], x1=ph["t1"], y0=0, y1=ymax,
+                          xref=xa, yref=ya, line=dict(width=0),
+                          fillcolor=ph["color"], opacity=0.85, layer="below")
+            fig.add_annotation(x=(ph["t0"] + ph["t1"]) / 2, y=ymax * 0.99,
+                               xref=xa, yref=ya, text=ph["label"], showarrow=False,
+                               yanchor="top", textangle=0,
+                               font=dict(size=8, color="#888"))
+        for key, color in [("fp", "#888"), ("mer", "#aaa"), ("br", theme.ORANGE_DARK)]:
             fr = fp["event_frames"].get(key)
             if fr is not None and fr < len(frame_times):
                 tx0 = float(frame_times[fr])
                 fig.add_shape(type="line", x0=tx0, x1=tx0, y0=0, y1=ymax,
                               xref=xa, yref=ya,
                               line=dict(color=color, dash="dash", width=1))
-                fig.add_annotation(x=tx0, y=ymax, xref=xa, yref=ya, text=key.upper(),
-                                   showarrow=False, font=dict(size=9, color=color),
-                                   yanchor="bottom")
 
     # frames
+    lead_peak, rear_peak = float(np.nanmax(lead)), float(np.nanmax(rear))
     anim_frames = []
     for f in frames_idx:
         coords = markers.points[f]
@@ -156,6 +199,8 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         fin = np.isfinite(coords).all(axis=-1)
         (vx, vy, vz), (tx, ty, tz) = _vector_segments(vecs, f)
         tt = float(frame_times[f])
+        lc, ltc, ltxt = _foot_state(lead[f], lead_peak, unit)
+        rc, rtc, rtxt = _foot_state(rear[f], rear_peak, unit)
         anim_frames.append(go.Frame(name=str(f), data=[
             go.Scatter3d(x=sx, y=sy, z=sz),
             go.Scatter3d(x=coords[fin, 0], y=coords[fin, 1], z=coords[fin, 2]),
@@ -164,8 +209,26 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
             go.Scatter(x=[tt], y=[float(rear[f])]),
             go.Scatter3d(x=vx, y=vy, z=vz),
             go.Scatter3d(x=tx, y=ty, z=tz),
-        ], traces=[1, 2, 5, 6, 7, 8, 9]))
+            go.Scatter(x=[0.5], y=[0.70],
+                       marker=dict(symbol="square", size=64, color=lc,
+                                   line=dict(color="#888", width=1)),
+                       text=[ltxt], textfont=dict(color=ltc, size=12)),
+            go.Scatter(x=[0.5], y=[0.28],
+                       marker=dict(symbol="square", size=64, color=rc,
+                                   line=dict(color="#888", width=1)),
+                       text=[rtxt], textfont=dict(color=rtc, size=12)),
+        ], traces=[1, 2, 5, 6, 7, 8, 9, 10, 11]))
     fig.frames = anim_frames
+
+    # Hide the foot-square subplot axes and label the two squares.
+    fig.update_xaxes(visible=False, range=[0, 1], row=1, col=3)
+    fig.update_yaxes(visible=False, range=[0, 1], row=1, col=3)
+    xb = fig.data[10].xaxis or "x3"
+    yb = fig.data[10].yaxis or "y3"
+    fig.add_annotation(x=0.5, y=0.93, xref=xb, yref=yb, showarrow=False,
+                       text=f"<b>{lead_leg}</b> lead", font=dict(size=10, color=_LEAD_C))
+    fig.add_annotation(x=0.5, y=0.50, xref=xb, yref=yb, showarrow=False,
+                       text=f"<b>{rear_leg}</b> rear", font=dict(size=10, color=_REAR_C))
 
     fig.update_scenes(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
                       zaxis_title="Z up (m)",

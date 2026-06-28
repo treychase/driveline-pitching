@@ -120,6 +120,24 @@ def _load_force(dataset, session_pitch, frame_times):
 
 
 _LEAD_C, _REAR_C = theme.ORANGE, theme.SLATE
+_HIGHLIGHT = "#d62728"  # colour a foot square flashes to at its peak force
+
+
+def _square_cmap():
+    from matplotlib.colors import LinearSegmentedColormap
+    return LinearSegmentedColormap.from_list(
+        "foot", [theme.PANEL, theme.ORANGE_LIGHT, theme.ORANGE])
+
+
+def _set_square(sq, txt, val, peak, unit):
+    """Colour a foot square by its current force; flash red at the max."""
+    frac = float(np.clip(val / peak, 0, 1)) if peak > 0 else 0.0
+    at_max = peak > 0 and val >= 0.99 * peak
+    sq.set_facecolor(_HIGHLIGHT if at_max else _square_cmap()(frac))
+    sq.set_edgecolor(_HIGHLIGHT if at_max else "0.5")
+    sq.set_linewidth(2.6 if at_max else 1.2)
+    txt.set_text(f"{val:.2f}\n{'◀ MAX' if at_max else unit}")
+    txt.set_color("white" if (frac > 0.6 or at_max) else theme.TEXT)
 
 
 def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
@@ -142,6 +160,9 @@ def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
     rear = fp["rear_vertical" + suffix]
     t = frame_times
 
+    import force_plate as _fp
+    from matplotlib.patches import Rectangle
+
     ax_force.plot(t, lead, color=_LEAD_C, lw=1.6, label=f"Lead leg ({lead_leg})")
     ax_force.plot(t, rear, color=_REAR_C, lw=1.6, label=f"Rear leg ({rear_leg})")
     ymax = float(np.nanmax([np.nanmax(lead), np.nanmax(rear), 1.0])) * 1.18
@@ -152,18 +173,23 @@ def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
     ax_force.set_title("Live ground reaction force", fontweight="bold", fontsize=10)
     ax_force.tick_params(labelsize=7)
 
-    ev_style = {"fp": ("FP", "0.35"), "mer": ("MER", "0.55"),
-                "br": ("BR", "crimson")}
-    for key, (lab, c) in ev_style.items():
+    # Shaded delivery phases behind the traces.
+    ev_times = {k: float(t[fr]) for k, fr in fp["event_frames"].items()
+                if fr < len(t)}
+    for ph in _fp.delivery_phases(ev_times, float(t[-1])):
+        ax_force.axvspan(ph["t0"], ph["t1"], color=ph["color"], alpha=0.85,
+                         zorder=0, lw=0)
+        ax_force.text((ph["t0"] + ph["t1"]) / 2, ymax * 0.97, ph["label"],
+                      ha="center", va="top", fontsize=5.5, color="0.4", zorder=1)
+    for key in ("fp", "mer", "br"):
         fr = fp["event_frames"].get(key)
         if fr is not None and fr < len(t):
-            ax_force.axvline(t[fr], color=c, ls="--", lw=1.0, alpha=0.7)
-            ax_force.text(t[fr], ymax * 0.99, lab, rotation=90, va="top",
-                          ha="right", fontsize=6, color=c)
-    ax_force.legend(loc="upper left", fontsize=7, framealpha=0.9)
+            ax_force.axvline(t[fr], color="0.5", ls="--", lw=0.8, alpha=0.6,
+                             zorder=1)
+    ax_force.legend(loc="lower left", fontsize=7, framealpha=0.9)
 
     # Animated trace artists
-    cursor = ax_force.axvline(t[0], color="k", lw=1.2)
+    cursor = ax_force.axvline(t[0], color="k", lw=1.2, zorder=4)
     lead_dot, = ax_force.plot([t[0]], [lead[0]], "o", color=_LEAD_C, ms=7,
                               zorder=5)
     rear_dot, = ax_force.plot([t[0]], [rear[0]], "o", color=_REAR_C, ms=7,
@@ -174,24 +200,34 @@ def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
         bbox=dict(boxstyle="round", fc="white", ec="0.7", alpha=0.85),
     )
 
-    # L/R bar gauge
-    ax_bars.set_xlim(-0.6, 1.6)
-    ax_bars.set_ylim(0, ymax)
-    ax_bars.set_xticks([0, 1])
-    ax_bars.set_xticklabels([f"{lead_leg}\nlead", f"{rear_leg}\nrear"], fontsize=8)
-    ax_bars.set_yticks([])
-    ax_bars.set_title(f"vGRF\n({unit})", fontsize=8)
-    bar_lead = ax_bars.bar(0, 0.0, width=0.7, color=_LEAD_C)[0]
-    bar_rear = ax_bars.bar(1, 0.0, width=0.7, color=_REAR_C)[0]
-    bar_txt_l = ax_bars.text(0, 0, "", ha="center", va="bottom", fontsize=7)
-    bar_txt_r = ax_bars.text(1, 0, "", ha="center", va="bottom", fontsize=7)
+    # Two foot squares (lead/rear) that show the live value and flash at the max.
+    ax_bars.set_xlim(0, 1)
+    ax_bars.set_ylim(0, 1)
+    ax_bars.axis("off")
+    ax_bars.set_title(f"Foot vGRF\n({unit})", fontsize=8)
+    sq_lead = Rectangle((0.15, 0.55), 0.7, 0.34, facecolor=theme.PANEL,
+                        edgecolor="0.5", lw=1.2)
+    sq_rear = Rectangle((0.15, 0.09), 0.7, 0.34, facecolor=theme.PANEL,
+                        edgecolor="0.5", lw=1.2)
+    ax_bars.add_patch(sq_lead)
+    ax_bars.add_patch(sq_rear)
+    ax_bars.text(0.5, 0.93, f"{lead_leg} lead", ha="center", va="center",
+                 fontsize=7, color=_LEAD_C, fontweight="bold")
+    ax_bars.text(0.5, 0.47, f"{rear_leg} rear", ha="center", va="center",
+                 fontsize=7, color=_REAR_C, fontweight="bold")
+    val_lead = ax_bars.text(0.5, 0.72, "", ha="center", va="center",
+                            fontsize=10, fontweight="bold")
+    val_rear = ax_bars.text(0.5, 0.26, "", ha="center", va="center",
+                            fontsize=10, fontweight="bold")
 
     return {
         "lead": lead, "rear": rear, "t": t, "unit": unit,
         "lead_leg": lead_leg, "rear_leg": rear_leg,
         "cursor": cursor, "lead_dot": lead_dot, "rear_dot": rear_dot,
-        "live_txt": live_txt, "bar_lead": bar_lead, "bar_rear": bar_rear,
-        "bar_txt_l": bar_txt_l, "bar_txt_r": bar_txt_r,
+        "live_txt": live_txt,
+        "sq_lead": sq_lead, "sq_rear": sq_rear,
+        "val_lead": val_lead, "val_rear": val_rear,
+        "peak_lead": float(np.nanmax(lead)), "peak_rear": float(np.nanmax(rear)),
     }
 
 
@@ -208,14 +244,10 @@ def _update_force_panel(fa, frame_idx):
         f"{fa['lead_leg']} lead: {lv:5.2f} {fa['unit']}\n"
         f"{fa['rear_leg']} rear: {rv:5.2f} {fa['unit']}"
     )
-    fa["bar_lead"].set_height(lv)
-    fa["bar_rear"].set_height(rv)
-    fa["bar_txt_l"].set_position((0, lv))
-    fa["bar_txt_l"].set_text(f"{lv:.1f}")
-    fa["bar_txt_r"].set_position((1, rv))
-    fa["bar_txt_r"].set_text(f"{rv:.1f}")
+    _set_square(fa["sq_lead"], fa["val_lead"], lv, fa["peak_lead"], fa["unit"])
+    _set_square(fa["sq_rear"], fa["val_rear"], rv, fa["peak_rear"], fa["unit"])
     return [fa["cursor"], fa["lead_dot"], fa["rear_dot"], fa["live_txt"],
-            fa["bar_lead"], fa["bar_rear"], fa["bar_txt_l"], fa["bar_txt_r"]]
+            fa["sq_lead"], fa["sq_rear"], fa["val_lead"], fa["val_rear"]]
 
 
 def build_dashboard(
