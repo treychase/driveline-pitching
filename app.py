@@ -28,8 +28,67 @@ STEP = 6  # frame step for the pose animation (larger = lighter for the Space)
 # Train once at startup; reused across requests.
 TRAINED = train_velocity_model()
 DS = TRAINED.dataset
-PITCHES = DS.poi["session_pitch"].astype(str).tolist()
+
+
+def _build_pitcher_index(ds):
+    """Group every pitch by its pitcher so the UI can offer a two-step picker.
+
+    Returns ``(pitchers, sp_to_user)`` where ``pitchers`` maps a pitcher id
+    (the ``user`` column from ``metadata.csv``) to a dict with display info and
+    that pitcher's list of pitches ``[(session_pitch, velo, pitch_type), ...]``.
+    """
+    poi = ds.poi
+    user_by_sp = dict(zip(ds.meta["session_pitch"].astype(str),
+                          ds.meta["user"].astype(str)))
+    level_by_user = dict(zip(ds.meta["user"].astype(str),
+                             ds.meta["playing_level"].astype(str)))
+    pitchers: dict[str, dict] = {}
+    for _, r in poi.iterrows():
+        sp = str(r["session_pitch"])
+        user = user_by_sp.get(sp, "unknown")
+        info = pitchers.setdefault(user, {
+            "handed": str(r.get("p_throws", "?")),
+            "level": level_by_user.get(user, "?"),
+            "pitches": [],
+        })
+        info["pitches"].append((sp, float(r["pitch_speed_mph"]),
+                                str(r.get("pitch_type", "?"))))
+    for info in pitchers.values():
+        info["pitches"].sort(key=lambda t: t[0])
+    sp_to_user = {sp: u for u, info in pitchers.items()
+                  for sp, _, _ in info["pitches"]}
+    return pitchers, sp_to_user
+
+
+PITCHERS, SP_TO_USER = _build_pitcher_index(DS)
+PITCHER_IDS = sorted(PITCHERS, key=lambda u: (0, int(u)) if u.isdigit() else (1, u))
+
+
+def _pitcher_label(user):
+    info = PITCHERS[user]
+    velos = [v for _, v, _ in info["pitches"]]
+    n = len(velos)
+    return (f"Pitcher {user} · {info['handed']}HP · {info['level']} · "
+            f"{n} pitch{'es' if n != 1 else ''} · {min(velos):.0f}–{max(velos):.0f} mph")
+
+
+def _pitcher_choices():
+    return [(_pitcher_label(u), u) for u in PITCHER_IDS]
+
+
+def _pitch_choices(user):
+    return [(f"{sp} · {pt} · {v:.1f} mph", sp)
+            for sp, v, pt in PITCHERS[user]["pitches"]]
+
+
+# Default to the first held-out test pitch (falling back to the first pitcher).
 DEFAULT_PITCH = str(DS.poi["session_pitch"].iloc[int(TRAINED.test_idx[0])])
+if DEFAULT_PITCH in SP_TO_USER:
+    DEFAULT_USER = SP_TO_USER[DEFAULT_PITCH]
+else:
+    DEFAULT_USER = PITCHER_IDS[0]
+    DEFAULT_PITCH = PITCHERS[DEFAULT_USER]["pitches"][0][0]
+
 DIAG = dh.build_diagnostics_figures(TRAINED, highlight=[DEFAULT_PITCH])
 
 
@@ -80,17 +139,35 @@ def work_figures(sp):
 
 HEADER = f"""
 # OpenBiomechanics Pitching Dashboard
+Choose any of **{len(PITCHER_IDS)} pitchers** ({len(SP_TO_USER)} pitches) below —
 Bayesian-Lasso velocity prediction · live force plates · joint work & velocity
 vectors. Model: **R²={TRAINED.metrics['r2']:.2f}, RMSE={TRAINED.metrics['rmse']:.1f} mph**
 (held-out test). Data source: {data_sources.describe()}.
 """
 
 
+def _on_pitcher_change(user):
+    """Refresh the pitch dropdown for the newly selected pitcher.
+
+    Setting a new ``value`` here also fires the pitch dropdown's ``change``
+    event, which rebuilds the figures — so the selectors stay in sync without
+    recomputing the (expensive) pose animation twice.
+    """
+    choices = _pitch_choices(user)
+    value = choices[0][1] if choices else None
+    return gr.update(choices=choices, value=value)
+
+
 def build_demo():
     with gr.Blocks(title="OBP Pitching Dashboard") as demo:
         gr.Markdown(HEADER)
-        pitch = gr.Dropdown(choices=PITCHES, value=DEFAULT_PITCH, label="Pitch",
-                            info="Applies to Live delivery and Joint work")
+        with gr.Row():
+            pitcher = gr.Dropdown(choices=_pitcher_choices(), value=DEFAULT_USER,
+                                  label="Pitcher", filterable=True,
+                                  info="Type to search across all pitchers")
+            pitch = gr.Dropdown(choices=_pitch_choices(DEFAULT_USER),
+                                value=DEFAULT_PITCH, label="Pitch", filterable=True,
+                                info="Applies to Live delivery and Joint work")
 
         with gr.Tabs():
             with gr.Tab("Live delivery"):
@@ -115,6 +192,9 @@ def build_demo():
 
         live_out = [live_info, anim_plot, velo_plot, zbio_plot]
         work_out = [jwt_plot, jwz_plot]
+        # Picking a pitcher repopulates the pitch list and selects its first
+        # pitch; that selection change drives the figure rebuild below.
+        pitcher.change(_on_pitcher_change, pitcher, pitch)
         pitch.change(live_figures, pitch, live_out)
         pitch.change(work_figures, pitch, work_out)
         demo.load(live_figures, pitch, live_out)
