@@ -176,6 +176,57 @@ for row in trained.model.coef_summary(trained.dataset.feature_names)[:10]:
 > they summarise. Pitchers are a mix of left- and right-handed; the model uses
 > biomechanics magnitudes and is not mirrored by handedness.
 
+## Live force plates + interactive dashboard with a glossary tab
+
+`dashboard_html.py` builds a **self-contained interactive HTML dashboard** with
+two tabs:
+
+* **Live delivery** — a Plotly animation of the 3D pose on the dirt mound with a
+  Play button and a frame slider. Scrubbing the delivery drives a synchronized
+  **live ground-reaction-force** plot of the lead vs. rear leg (labelled by the
+  pitcher's actual **L/R** legs via handedness), with a moving time cursor and
+  event markers (foot plant, MER, ball release). The velocity gauge and
+  colour-coded z-scores sit alongside.
+* **Glossary** — a searchable table with **full explanations of every
+  biomechanics variable**, plus the delivery events and coordinate/force
+  conventions, sourced from the OBP documentation.
+
+![Live delivery tab](examples/dashboard_html_live.png)
+![Glossary tab](examples/dashboard_html_glossary.png)
+
+```bash
+# Build the interactive dashboard (Plotly from CDN; needs internet to view)
+python dashboard_html.py --pitch 1097_1 --out dashboard.html
+
+# Fully self-contained / offline (embeds Plotly.js, larger file)
+python dashboard_html.py --pitch 1097_1 --offline --out dashboard.html
+```
+
+The animated **matplotlib** dashboard (`dashboard.py`) also gained a live
+force-plate panel: lead/rear vertical GRF traces with a moving cursor and an
+L/R bar gauge that updates frame-by-frame next to the pose animation.
+
+### Force plates and the glossary as modules
+
+```python
+import force_plate, glossary
+
+# Per-pitch ground reaction forces, aligned to the C3D marker frames
+trace = force_plate.load_force_plate("1097_1", bodyweight_n=76 * 9.81)
+aligned = trace.align_to_frames(frame_times)   # rear/lead vertical & magnitude per frame
+aligned["event_frames"]                         # {'fp': 298, 'br': 361, ...}
+
+# Glossary of every variable (definition, units, event, category)
+glossary.lookup("elbow_varus_moment").definition
+df = glossary.as_dataframe()                     # all 81 variables as a table
+open("GLOSSARY.md", "w").write(glossary.render_markdown())
+```
+
+The force-plate series (`rear_force_*`, `lead_force_*`) come from the OBP
+`full_sig/force_plate.zip` (~1080 Hz) and share the C3D clock, so they align to
+the pose by simple time interpolation. A full text glossary is also rendered to
+[`GLOSSARY.md`](GLOSSARY.md).
+
 ## Data & license
 
 The C3D files belong to the OpenBiomechanics Project and are licensed

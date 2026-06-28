@@ -104,13 +104,8 @@ def _surface_height(dx, dy, params, rng):
     return np.maximum(z, field_z - 0.02)
 
 
-def build_mound_mesh(markers, sectors: int = 56, rings: int = 16,
-                     mound_height: float = 0.28, seed: int = 0):
-    """Build the mound as polar-grid quad faces.
-
-    Returns ``(faces, face_colors, params, all_vertices)`` where ``faces`` is a
-    list of (4, 3) quads suitable for ``Poly3DCollection``.
-    """
+def _mound_grid(markers, sectors: int, rings: int, mound_height: float, seed: int):
+    """Build the (rings+1, sectors+1, 3) polar vertex grid and mound params."""
     rng = np.random.default_rng(seed)
     params = estimate_mound(markers, mound_height=mound_height)
     cx, cy = params["center_xy"]
@@ -120,12 +115,23 @@ def build_mound_mesh(markers, sectors: int = 56, rings: int = 16,
     radii = np.linspace(0.0, params["r_outer"], rings + 1) ** 1.15
     radii = radii / radii.max() * params["r_outer"]
 
-    # Vertex grid (rings+1, sectors+1, 3)
     R, TH = np.meshgrid(radii, thetas, indexing="ij")
     DX, DY = R * np.cos(TH), R * np.sin(TH)
     Z = _surface_height(DX, DY, params, rng)
     X, Y = cx + DX, cy + DY
     grid = np.stack([X, Y, Z], axis=-1)
+    return grid, params
+
+
+def build_mound_mesh(markers, sectors: int = 56, rings: int = 16,
+                     mound_height: float = 0.28, seed: int = 0):
+    """Build the mound as polar-grid quad faces.
+
+    Returns ``(faces, face_colors, params, all_vertices)`` where ``faces`` is a
+    list of (4, 3) quads suitable for ``Poly3DCollection``.
+    """
+    rng = np.random.default_rng(seed + 1)
+    grid, params = _mound_grid(markers, sectors, rings, mound_height, seed)
 
     faces, colors = [], []
     span = params["table_z"] - params["field_z"] or 1.0
@@ -141,6 +147,33 @@ def build_mound_mesh(markers, sectors: int = 56, rings: int = 16,
             colors.append(base)
 
     return faces, np.array(colors), params, grid.reshape(-1, 3)
+
+
+def mound_trimesh(markers, sectors: int = 56, rings: int = 16,
+                  mound_height: float = 0.28, seed: int = 0):
+    """Triangulated mound for Plotly ``Mesh3d``.
+
+    Returns ``(x, y, z, i, j, k, intensity, params)`` where ``i/j/k`` are
+    triangle vertex indices and ``intensity`` is per-vertex height (for a dirt
+    colorscale).
+    """
+    grid, params = _mound_grid(markers, sectors, rings, mound_height, seed)
+    verts = grid.reshape(-1, 3)
+    n_col = sectors + 1
+
+    def vid(ri, sj):
+        return ri * n_col + sj
+
+    I, J, K = [], [], []
+    for ri in range(rings):
+        for sj in range(sectors):
+            a, b = vid(ri, sj), vid(ri, sj + 1)
+            c, d = vid(ri + 1, sj + 1), vid(ri + 1, sj)
+            I += [a, a]
+            J += [b, c]
+            K += [c, d]
+    return (verts[:, 0], verts[:, 1], verts[:, 2],
+            np.array(I), np.array(J), np.array(K), verts[:, 2], params)
 
 
 def _rubber_quad(params, half_len=0.305, half_wid=0.076):

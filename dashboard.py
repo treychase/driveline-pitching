@@ -97,6 +97,123 @@ def _draw_zscore_panel(fig, ax, zdf, top_n: int = 18, zlim: float = 3.0):
     cbar.ax.tick_params(labelsize=7)
 
 
+def _load_force(dataset, session_pitch, frame_times):
+    """Load + frame-align force plates for a pitch; None if unavailable."""
+    try:
+        import force_plate
+    except ImportError:
+        return None
+    meta = dataset.meta.loc[dataset.meta.session_pitch == session_pitch]
+    mass_kg = float(meta.iloc[0]["session_mass_kg"]) if not meta.empty else None
+    bw_n = mass_kg * 9.81 if mass_kg else None
+    try:
+        trace = force_plate.load_force_plate(session_pitch, bodyweight_n=bw_n)
+    except (KeyError, FileNotFoundError):
+        return None
+    aligned = trace.align_to_frames(frame_times)
+    aligned["has_bw"] = bw_n is not None
+    return aligned
+
+
+_LEAD_C, _REAR_C = "tab:green", "tab:orange"
+
+
+def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
+    """Draw static force traces + an L/R gauge; return animated artists.
+
+    Returns None if no force data is available (and blanks the axes).
+    """
+    if fp is None:
+        for a in (ax_force, ax_bars):
+            a.axis("off")
+        ax_force.text(0.5, 0.5, "No force-plate data for this pitch",
+                      ha="center", va="center", transform=ax_force.transAxes,
+                      color="0.5")
+        return None
+
+    use_bw = fp.get("has_bw")
+    suffix = "_bw" if use_bw else ""
+    unit = "BW" if use_bw else "N"
+    lead = fp["lead_vertical" + suffix]
+    rear = fp["rear_vertical" + suffix]
+    t = frame_times
+
+    ax_force.plot(t, lead, color=_LEAD_C, lw=1.6, label=f"Lead leg ({lead_leg})")
+    ax_force.plot(t, rear, color=_REAR_C, lw=1.6, label=f"Rear leg ({rear_leg})")
+    ymax = float(np.nanmax([np.nanmax(lead), np.nanmax(rear), 1.0])) * 1.18
+    ax_force.set_ylim(0, ymax)
+    ax_force.set_xlim(float(t[0]), float(t[-1]))
+    ax_force.set_xlabel("time (s)", fontsize=8)
+    ax_force.set_ylabel(f"vertical GRF ({unit})", fontsize=8)
+    ax_force.set_title("Live ground reaction force", fontweight="bold", fontsize=10)
+    ax_force.tick_params(labelsize=7)
+
+    ev_style = {"fp": ("FP", "0.35"), "mer": ("MER", "0.55"),
+                "br": ("BR", "crimson")}
+    for key, (lab, c) in ev_style.items():
+        fr = fp["event_frames"].get(key)
+        if fr is not None and fr < len(t):
+            ax_force.axvline(t[fr], color=c, ls="--", lw=1.0, alpha=0.7)
+            ax_force.text(t[fr], ymax * 0.99, lab, rotation=90, va="top",
+                          ha="right", fontsize=6, color=c)
+    ax_force.legend(loc="upper left", fontsize=7, framealpha=0.9)
+
+    # Animated trace artists
+    cursor = ax_force.axvline(t[0], color="k", lw=1.2)
+    lead_dot, = ax_force.plot([t[0]], [lead[0]], "o", color=_LEAD_C, ms=7,
+                              zorder=5)
+    rear_dot, = ax_force.plot([t[0]], [rear[0]], "o", color=_REAR_C, ms=7,
+                              zorder=5)
+    live_txt = ax_force.text(
+        0.985, 0.96, "", transform=ax_force.transAxes, ha="right", va="top",
+        fontsize=8, family="monospace",
+        bbox=dict(boxstyle="round", fc="white", ec="0.7", alpha=0.85),
+    )
+
+    # L/R bar gauge
+    ax_bars.set_xlim(-0.6, 1.6)
+    ax_bars.set_ylim(0, ymax)
+    ax_bars.set_xticks([0, 1])
+    ax_bars.set_xticklabels([f"{lead_leg}\nlead", f"{rear_leg}\nrear"], fontsize=8)
+    ax_bars.set_yticks([])
+    ax_bars.set_title(f"vGRF\n({unit})", fontsize=8)
+    bar_lead = ax_bars.bar(0, 0.0, width=0.7, color=_LEAD_C)[0]
+    bar_rear = ax_bars.bar(1, 0.0, width=0.7, color=_REAR_C)[0]
+    bar_txt_l = ax_bars.text(0, 0, "", ha="center", va="bottom", fontsize=7)
+    bar_txt_r = ax_bars.text(1, 0, "", ha="center", va="bottom", fontsize=7)
+
+    return {
+        "lead": lead, "rear": rear, "t": t, "unit": unit,
+        "lead_leg": lead_leg, "rear_leg": rear_leg,
+        "cursor": cursor, "lead_dot": lead_dot, "rear_dot": rear_dot,
+        "live_txt": live_txt, "bar_lead": bar_lead, "bar_rear": bar_rear,
+        "bar_txt_l": bar_txt_l, "bar_txt_r": bar_txt_r,
+    }
+
+
+def _update_force_panel(fa, frame_idx):
+    """Advance the live force artists to ``frame_idx``; return them for blitting."""
+    t = fa["t"]
+    tt = float(t[frame_idx])
+    lv = float(fa["lead"][frame_idx])
+    rv = float(fa["rear"][frame_idx])
+    fa["cursor"].set_xdata([tt, tt])
+    fa["lead_dot"].set_data([tt], [lv])
+    fa["rear_dot"].set_data([tt], [rv])
+    fa["live_txt"].set_text(
+        f"{fa['lead_leg']} lead: {lv:5.2f} {fa['unit']}\n"
+        f"{fa['rear_leg']} rear: {rv:5.2f} {fa['unit']}"
+    )
+    fa["bar_lead"].set_height(lv)
+    fa["bar_rear"].set_height(rv)
+    fa["bar_txt_l"].set_position((0, lv))
+    fa["bar_txt_l"].set_text(f"{lv:.1f}")
+    fa["bar_txt_r"].set_position((1, rv))
+    fa["bar_txt_r"].set_text(f"{rv:.1f}")
+    return [fa["cursor"], fa["lead_dot"], fa["rear_dot"], fa["live_txt"],
+            fa["bar_lead"], fa["bar_rear"], fa["bar_txt_l"], fa["bar_txt_r"]]
+
+
 def build_dashboard(
     session_pitch: str | None = None,
     trained: TrainedVelocityModel | None = None,
@@ -157,17 +274,35 @@ def build_dashboard(
     if fps is None:
         fps = max(1, int(round(markers.rate / step)))
 
+    # Load + align the force plates (live GRF during the delivery)
+    frame_times = np.arange(markers.n_frames) / markers.rate
+    fp_aligned = _load_force(ds, session_pitch, frame_times)
+    handed = str(ds.poi.iloc[ds.index_of(session_pitch)].get("p_throws", "R"))
+    # Map the two force plates to the actual legs by handedness.
+    if handed.upper().startswith("R"):
+        rear_leg, lead_leg = "R", "L"
+    else:
+        rear_leg, lead_leg = "L", "R"
+
     # --- Figure layout ---
-    fig = plt.figure(figsize=(15, 8.5), constrained_layout=True)
-    gs = fig.add_gridspec(2, 2, width_ratios=[1.15, 1.0], height_ratios=[1.0, 2.2])
-    ax3d = fig.add_subplot(gs[:, 0], projection="3d")
+    fig = plt.figure(figsize=(15, 9.0), constrained_layout=True)
+    gs = fig.add_gridspec(3, 2, width_ratios=[1.15, 1.0],
+                          height_ratios=[1.0, 1.15, 0.95])
+    ax3d = fig.add_subplot(gs[0:2, 0], projection="3d")
     ax_velo = fig.add_subplot(gs[0, 1])
-    ax_z = fig.add_subplot(gs[1, 1])
+    ax_z = fig.add_subplot(gs[1:3, 1])
+    # Bottom-left: live force-plate traces + an L/R bar gauge.
+    gs_f = gs[2, 0].subgridspec(1, 5)
+    ax_force = fig.add_subplot(gs_f[0, 0:4])
+    ax_bars = fig.add_subplot(gs_f[0, 4])
 
     velo_lo = float(min(ds.y.min(), predicted - 3 * pred_std) - 2)
     velo_hi = float(max(ds.y.max(), predicted + 3 * pred_std) + 2)
     _draw_velocity_panel(ax_velo, predicted, pred_std, actual, velo_lo, velo_hi)
     _draw_zscore_panel(fig, ax_z, zdf, top_n=top_n)
+    force_art = _draw_force_panel(
+        ax_force, ax_bars, frame_times, fp_aligned, lead_leg, rear_leg
+    )
 
     mound_verts = None
     if mound:
@@ -205,7 +340,8 @@ def build_dashboard(
         ax3d.set_title(
             f"3D pose — frame {frame_idx}/{markers.n_frames - 1}", fontsize=10
         )
-        return seg_lines + [scatter]
+        extra = _update_force_panel(force_art, frame_idx) if force_art else []
+        return seg_lines + [scatter] + extra
 
     anim = animation.FuncAnimation(
         fig, update, frames=frames, interval=1000.0 / fps, blit=False
