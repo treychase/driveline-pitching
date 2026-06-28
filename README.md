@@ -92,6 +92,75 @@ mk.points            # (n_frames, n_markers, 3) array; gaps are NaN
   still render. Pass `segments=None` to plot markers only, or supply your own
   list of `(label_a, label_b)` pairs.
 
+## Velocity prediction + biomechanics dashboard
+
+Beyond plotting the raw motion, the repo can **predict pitch release velocity
+from the biomechanics** and present everything as a single animated dashboard:
+
+1. the 3D pose animation,
+2. the **actual vs. predicted release velocity** (with a posterior credible
+   interval), and
+3. **z-scores of every biomechanics metric**, colour-coded blue→red
+   (below→above the dataset average).
+
+![Dashboard](examples/dashboard.gif)
+
+```bash
+# Train the model, fetch the pitch's C3D, and render the dashboard
+python dashboard.py --out dashboard.gif
+
+# Pick a specific pitch and show more z-score bars
+python dashboard.py --pitch 1097_1 --top-n 24 --out dashboard.mp4
+```
+
+```python
+from dashboard import build_dashboard
+anim, info = build_dashboard(session_pitch="1097_1", save_path="dashboard.gif")
+print(info)   # predicted/actual mph, error, out-of-sample flag, test R²/RMSE
+```
+
+### The model: a Bayesian Lasso with Gaussian priors
+
+`bayesian_lasso.py` implements the Bayesian Lasso (Park & Casella, 2008) from
+scratch in NumPy via Gibbs sampling. It uses the **scale-mixture-of-Gaussians**
+representation of the Laplace prior: each coefficient gets a *Gaussian prior*
+conditional on its own variance,
+
+```
+beta_j | sigma^2, tau_j^2  ~  Normal(0, sigma^2 * tau_j^2)
+tau_j^2                    ~  Exponential(lambda^2 / 2)
+```
+
+Marginalising over `tau_j^2` recovers the double-exponential (Lasso) prior that
+shrinks weak predictors toward zero, while every Gibbs full-conditional stays a
+clean Gaussian / inverse-Gaussian / gamma draw. A Gamma hyper-prior on
+`lambda^2` lets the data choose the shrinkage strength.
+
+Trained on the 76 OpenBiomechanics POI metrics to predict `pitch_speed_mph`, it
+reaches roughly **R² ≈ 0.8, RMSE ≈ 2 mph** out-of-sample.
+
+```python
+from bayesian_lasso import BayesianLasso
+from velocity_model import load_dataset, train_velocity_model
+
+trained = train_velocity_model()          # downloads POI data, fits, holds out a test set
+print(trained.metrics)                     # {'r2': ..., 'rmse': ..., ...}
+mean, std = trained.predict_pitch("1097_1")
+
+# Inspect which biomechanics drive the prediction (posterior mean + 95% CI)
+for row in trained.model.coef_summary(trained.dataset.feature_names)[:10]:
+    print(row["feature"], round(row["mean"], 3), row["nonzero"])
+```
+
+`velocity_model.py` also computes per-pitch **z-scores** for every metric
+(`dataset.zscores(session_pitch)`) and links a pitch to its raw C3D file through
+`metadata.csv`.
+
+> Note: POI metrics are end-of-pitch summary values, so the velocity prediction
+> and z-scores describe the whole delivery; the pose panel animates the motion
+> they summarise. Pitchers are a mix of left- and right-handed; the model uses
+> biomechanics magnitudes and is not mirrored by handedness.
+
 ## Data & license
 
 The C3D files belong to the OpenBiomechanics Project and are licensed

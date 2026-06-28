@@ -7,8 +7,12 @@ venv/
 
 # Downloaded / local motion-capture data
 c3d_data/
+obp_data/
 *.c3d
+/poi.csv
+/meta.csv
 
 # Generated outputs (the curated demos in examples/ are force-added)
 *.mp4
 /c3d_animation.gif
+/dashboard.gif
