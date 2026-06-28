@@ -16,7 +16,6 @@ Force-plate sign conventions (from the OBP documentation):
 from __future__ import annotations
 
 import os
-import urllib.request
 from dataclasses import dataclass
 
 import numpy as np
@@ -50,11 +49,9 @@ _ALL_FP: pd.DataFrame | None = None
 
 
 def download_force_plate_zip(dest_dir: str = "obp_data") -> str:
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, "force_plate.zip")
-    if not os.path.exists(dest):
-        urllib.request.urlretrieve(OBP_FP_URL, dest)
-    return dest
+    import data_sources
+
+    return data_sources.get("full_sig/force_plate.zip", dest_dir=dest_dir)
 
 
 def _load_all(data_dir: str = "obp_data", download: bool = True) -> pd.DataFrame:

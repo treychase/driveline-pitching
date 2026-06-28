@@ -1,4 +1,19 @@
+---
+title: OpenBiomechanics Pitching Dashboard
+emoji: ⚾
+colorFrom: orange
+colorTo: gray
+sdk: gradio
+app_file: app.py
+pinned: false
+license: cc-by-nc-sa-4.0
+---
+
 # Driveline Pitching — 3D C3D Plotter
+
+[![CI](https://github.com/treychase/driveline-pitching/actions/workflows/ci.yml/badge.svg)](https://github.com/treychase/driveline-pitching/actions/workflows/ci.yml)
+[![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
 A small, dependency-light Python module for **loading and plotting C3D
 motion-capture files in 3D**, built for the
@@ -249,6 +264,50 @@ Force plates (`rear_force_*`, `lead_force_*`, ~1080 Hz) come from
 vectors are finite-differenced from `full_sig/landmarks.zip`. All share the C3D
 clock, so they align to the pose by time interpolation. A full text glossary is
 also rendered to [`GLOSSARY.md`](GLOSSARY.md).
+
+## Deployment & data sourcing
+
+The dashboard **sources all of its data directly** — there is no manual download
+step. Every table, C3D, and full-signal archive is fetched on demand through
+`data_sources.py`, which has two backends:
+
+* **OpenBiomechanics GitHub mirror** (default) — files come from
+  `raw.githubusercontent.com`.
+* **HuggingFace dataset** — set `OBP_HF_DATASET=<user>/<dataset>` and the same
+  files are pulled from that HF dataset repo via `huggingface_hub`.
+
+```bash
+# Mirror the processed data into your own HF dataset (needs `huggingface-cli login`)
+python scripts/upload_to_hf.py --repo your-name/openbiomechanics-pitching
+export OBP_HF_DATASET=your-name/openbiomechanics-pitching   # dashboard now sources from HF
+```
+
+### Deploy as a HuggingFace Space
+
+`app.py` is a [Gradio](https://gradio.app) app exposing the four dashboard tabs
+(Live delivery, Joint work, Model diagnostics, Glossary). This repository is a
+ready-to-deploy **HuggingFace Space** (see the YAML front-matter at the top of
+this file: `sdk: gradio`, `app_file: app.py`). Push the repo to a Space, or run
+it locally:
+
+```bash
+pip install -r requirements.txt gradio        # gradio only needed for the app
+python app.py                                  # http://localhost:7860
+```
+
+The Space trains the model on startup and sources data live; set
+`OBP_HF_DATASET` in the Space's **Settings → Variables** to source from the Hub.
+
+### Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the test suite (`tests/`) on
+Python 3.10–3.12 and lints with `ruff` on every push and pull request — the
+status is the **CI** badge above. Run the tests locally with:
+
+```bash
+pip install pytest
+pytest -q
+```
 
 ## Data & license
 

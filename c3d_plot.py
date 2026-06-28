@@ -217,19 +217,24 @@ def download_obp_c3d(
     dest_dir:
         Local directory to save into (created if needed).
     base_url:
-        Base raw URL of the dataset. Defaults to the pitching c3d directory.
+        Unused when the data-source layer is available (kept for compatibility);
+        a direct download from this base URL is used as a fallback.
 
     Returns
     -------
     str
         Local path to the downloaded file.
     """
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, filename)
-    if not os.path.exists(dest):
-        url = f"{base_url}/{session}/{filename}"
-        urllib.request.urlretrieve(url, dest)
-    return dest
+    try:
+        import data_sources
+        return data_sources.get(f"c3d/{session}/{filename}", local_name=filename,
+                                dest_dir=dest_dir)
+    except ImportError:
+        os.makedirs(dest_dir, exist_ok=True)
+        dest = os.path.join(dest_dir, filename)
+        if not os.path.exists(dest):
+            urllib.request.urlretrieve(f"{base_url}/{session}/{filename}", dest)
+        return dest
 
 
 # --------------------------------------------------------------------------- #
@@ -542,7 +547,7 @@ def main(argv=None) -> None:
                     save_path=out, mound=args.mound)
         print(f"Saved animation to {out}")
     else:
-        ax = plot_c3d(
+        plot_c3d(
             args.path, frame=args.frame, segments=segments,
             show_labels=args.labels, save_path=args.out, mound=args.mound,
         )

@@ -13,7 +13,6 @@ The pieces here feed the dashboard in ``dashboard.py``.
 from __future__ import annotations
 
 import os
-import urllib.request
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,19 +33,17 @@ TARGET_COL = "pitch_speed_mph"
 
 
 def download_obp_table(name: str, dest_dir: str = "obp_data") -> str:
-    """Download ``poi_metrics.csv`` or ``metadata.csv`` from the OBP repo.
+    """Fetch ``poi_metrics.csv`` or ``metadata.csv`` via the data-source layer.
 
     ``name`` is one of ``"poi_metrics"`` or ``"metadata"``.
     """
+    import data_sources
+
     rel = {
         "poi_metrics": "poi/poi_metrics.csv",
         "metadata": "metadata.csv",
     }[name]
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, os.path.basename(rel))
-    if not os.path.exists(dest):
-        urllib.request.urlretrieve(f"{OBP_DATA_BASE}/{rel}", dest)
-    return dest
+    return data_sources.get(rel, dest_dir=dest_dir)
 
 
 @dataclass

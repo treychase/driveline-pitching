@@ -20,7 +20,6 @@ or call :func:`build_dashboard` from Python for more control.
 from __future__ import annotations
 
 import argparse
-import os
 
 import numpy as np
 
@@ -29,7 +28,6 @@ import theme
 from velocity_model import (
     PitchDataset,
     TrainedVelocityModel,
-    load_dataset,
     train_velocity_model,
 )
 
@@ -73,7 +71,6 @@ def _draw_velocity_panel(ax, predicted, pred_std, actual, lo, hi) -> None:
 
 def _draw_zscore_panel(fig, ax, zdf, top_n: int = 18, zlim: float = 3.0):
     """Color-coded horizontal bars of per-metric z-scores."""
-    import matplotlib as mpl
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 

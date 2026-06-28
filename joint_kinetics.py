@@ -61,26 +61,24 @@ def _energy_col(joint):
 def _load_energy(data_dir="obp_data"):
     global _ENERGY
     if _ENERGY is None:
+        import data_sources
+        path = data_sources.get("full_sig/energy_flow.zip", dest_dir=data_dir)
         cols = {"session_pitch", "time", "BR_time", "pkh_time", "fp_100_time",
                 "MER_time", "MIR_time"}
         cols.update(_energy_col(j) for j in ENERGY_JOINTS)
-        _ENERGY = pd.read_csv(
-            os.path.join(data_dir, "energy_flow.zip"),
-            usecols=lambda c: c in cols,
-        )
+        _ENERGY = pd.read_csv(path, usecols=lambda c: c in cols)
     return _ENERGY
 
 
 def _load_landmarks(data_dir="obp_data"):
     global _LANDMARKS
     if _LANDMARKS is None:
+        import data_sources
+        path = data_sources.get("full_sig/landmarks.zip", dest_dir=data_dir)
         cols = {"session_pitch", "time"}
         for stem in VECTOR_JOINTS.values():
             cols.update(_axis_cols(stem))
-        _LANDMARKS = pd.read_csv(
-            os.path.join(data_dir, "landmarks.zip"),
-            usecols=lambda c: c in cols,
-        )
+        _LANDMARKS = pd.read_csv(path, usecols=lambda c: c in cols)
     return _LANDMARKS
 
 

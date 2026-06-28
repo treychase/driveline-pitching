@@ -409,7 +409,6 @@ def write_markdown(path: str = "GLOSSARY.md") -> str:
 
 if __name__ == "__main__":
     # Sanity / coverage check against poi_metrics.csv if present.
-    import os
     print(f"{len(TERMS)} glossary terms defined.")
     write_markdown()
     print("Wrote GLOSSARY.md")
