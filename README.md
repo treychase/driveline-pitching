@@ -55,7 +55,22 @@ python c3d_plot.py path/to/file.c3d --animate --step 2 --out pitch.gif
 
 # Markers only (no skeleton), with marker-name labels
 python c3d_plot.py path/to/file.c3d --no-skeleton --labels --out markers.png
+
+# Add a polygonal dirt pitching mound under the pitcher
+python c3d_plot.py path/to/file.c3d --animate --mound --out pitch_on_mound.gif
 ```
+
+### Dirt pitching mound
+
+Passing `mound=True` to `plot_c3d`/`animate_c3d` (or `--mound` on the CLI, and
+on by default in the dashboard) draws a **polygonal dirt mound** under the
+pitcher. The mound is derived entirely from the C3D foot markers
+(`mound.py`): the center, radius, ground level, and the downhill heading toward
+home plate are estimated from where the feet travel during the delivery, so the
+dirt sits naturally under the pitcher for any pitch or capture orientation. It
+is rendered as a polar grid of shaded dirt-colored quads — a flat plateau over
+the footwork, a cosine-eased slope to the surrounding field, a slight crown, and
+a white pitching rubber under the pivot foot.
 
 ## API
 

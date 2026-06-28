@@ -247,9 +247,17 @@ def _segments_present(markers: C3DMarkers, segments) -> list[tuple[int, int]]:
     return pairs
 
 
-def _equal_aspect_bounds(points: np.ndarray):
-    """Compute symmetric axis limits so the 3D plot keeps a 1:1:1 aspect."""
+def _equal_aspect_bounds(points: np.ndarray, extra_points=None):
+    """Compute symmetric axis limits so the 3D plot keeps a 1:1:1 aspect.
+
+    ``extra_points`` (e.g. mound vertices) are included in the bounds so added
+    scenery is not clipped.
+    """
     finite = points[np.isfinite(points).all(axis=-1)]
+    if extra_points is not None and len(extra_points):
+        extra = np.asarray(extra_points, float)
+        extra = extra[np.isfinite(extra).all(axis=-1)]
+        finite = np.vstack([finite, extra]) if finite.size else extra
     if finite.size == 0:
         return (-1, 1), (-1, 1), (-1, 1)
     mins = finite.min(axis=0)
@@ -273,6 +281,7 @@ def plot_c3d(
     azim: float = -60.0,
     title: str | None = None,
     save_path: str | None = None,
+    mound: bool = False,
     ax=None,
 ):
     """Plot a single frame of a C3D file as a 3D stick figure.
@@ -294,6 +303,9 @@ def plot_c3d(
         Plot title. Defaults to the file name and frame.
     save_path:
         If given, save the figure to this path instead of (only) returning it.
+    mound:
+        If True, draw a polygonal dirt pitching mound under the pitcher,
+        positioned and sized from the foot markers.
     ax:
         Optional existing 3D axes to draw into.
 
@@ -317,6 +329,12 @@ def plot_c3d(
         fig = plt.figure(figsize=(8, 8))
         ax = fig.add_subplot(111, projection="3d")
 
+    # Optional dirt mound under the pitcher
+    mound_verts = None
+    if mound:
+        from mound import add_mound
+        mound_verts = add_mound(ax, markers)
+
     # Skeleton segments
     for i, j in pairs:
         seg = np.array([coords[i], coords[j]])
@@ -335,7 +353,7 @@ def plot_c3d(
             if finite[idx]:
                 ax.text(*coords[idx], label, fontsize=6, color="0.2")
 
-    _apply_axes_style(ax, markers, elev, azim)
+    _apply_axes_style(ax, markers, elev, azim, extra_points=mound_verts)
     if title is None:
         name = source if isinstance(source, str) else "C3D"
         title = f"{os.path.basename(str(name))}  |  frame {frame}/{markers.n_frames - 1}"
@@ -357,6 +375,7 @@ def animate_c3d(
     azim: float = -60.0,
     title: str | None = None,
     save_path: str | None = None,
+    mound: bool = False,
 ):
     """Animate a C3D file as a rotating-free 3D stick figure over time.
 
@@ -405,7 +424,13 @@ def animate_c3d(
 
     fig = plt.figure(figsize=(8, 8))
     ax = fig.add_subplot(111, projection="3d")
-    _apply_axes_style(ax, markers, elev, azim)
+
+    mound_verts = None
+    if mound:
+        from mound import add_mound
+        mound_verts = add_mound(ax, markers)
+
+    _apply_axes_style(ax, markers, elev, azim, extra_points=mound_verts)
 
     name = source if isinstance(source, str) else "C3D"
     base_title = title or os.path.basename(str(name))
@@ -447,9 +472,12 @@ def animate_c3d(
     return anim
 
 
-def _apply_axes_style(ax, markers: C3DMarkers, elev: float, azim: float) -> None:
+def _apply_axes_style(ax, markers: C3DMarkers, elev: float, azim: float,
+                      extra_points=None) -> None:
     """Apply consistent labels, equal aspect, and view angle to a 3D axes."""
-    xlim, ylim, zlim = _equal_aspect_bounds(markers.points.reshape(-1, 3))
+    xlim, ylim, zlim = _equal_aspect_bounds(
+        markers.points.reshape(-1, 3), extra_points=extra_points
+    )
     ax.set_xlim(*xlim)
     ax.set_ylim(*ylim)
     ax.set_zlim(*zlim)
@@ -493,6 +521,10 @@ def _build_arg_parser():
     )
     p.add_argument("--labels", action="store_true", help="Annotate marker names.")
     p.add_argument(
+        "--mound", action="store_true",
+        help="Draw a polygonal dirt pitching mound under the pitcher.",
+    )
+    p.add_argument(
         "--out", default=None,
         help="Output file (.png for a frame; .gif/.mp4 for animation). "
              "If omitted, attempts an interactive window.",
@@ -506,12 +538,13 @@ def main(argv=None) -> None:
 
     if args.animate:
         out = args.out or "c3d_animation.gif"
-        animate_c3d(args.path, segments=segments, step=args.step, save_path=out)
+        animate_c3d(args.path, segments=segments, step=args.step,
+                    save_path=out, mound=args.mound)
         print(f"Saved animation to {out}")
     else:
         ax = plot_c3d(
             args.path, frame=args.frame, segments=segments,
-            show_labels=args.labels, save_path=args.out,
+            show_labels=args.labels, save_path=args.out, mound=args.mound,
         )
         if args.out:
             print(f"Saved figure to {args.out}")

@@ -104,6 +104,7 @@ def build_dashboard(
     top_n: int = 18,
     save_path: str | None = "dashboard.gif",
     fps: int | None = None,
+    mound: bool = True,
 ):
     """Build the animated dashboard for one pitch.
 
@@ -168,7 +169,12 @@ def build_dashboard(
     _draw_velocity_panel(ax_velo, predicted, pred_std, actual, velo_lo, velo_hi)
     _draw_zscore_panel(fig, ax_z, zdf, top_n=top_n)
 
-    c3d_plot._apply_axes_style(ax3d, markers, elev=12.0, azim=-60.0)
+    mound_verts = None
+    if mound:
+        from mound import add_mound
+        mound_verts = add_mound(ax3d, markers)
+    c3d_plot._apply_axes_style(ax3d, markers, elev=12.0, azim=-60.0,
+                               extra_points=mound_verts)
     tag = "out-of-sample" if in_test else "in-sample"
     fig.suptitle(
         f"Pitch {session_pitch}  ·  Bayesian-Lasso velocity prediction ({tag})  ·  "
@@ -237,6 +243,8 @@ def _build_arg_parser():
     p.add_argument("--step", type=int, default=2, help="Pose animation frame step.")
     p.add_argument("--top-n", type=int, default=18,
                    help="Number of z-score bars to show.")
+    p.add_argument("--no-mound", action="store_true",
+                   help="Disable the dirt pitching mound under the pitcher.")
     return p
 
 
@@ -244,7 +252,7 @@ def main(argv=None) -> None:
     args = _build_arg_parser().parse_args(argv)
     _, info = build_dashboard(
         session_pitch=args.pitch, step=args.step, top_n=args.top_n,
-        save_path=args.out,
+        save_path=args.out, mound=not args.no_mound,
     )
     print(f"Saved dashboard to {args.out}")
     print(
