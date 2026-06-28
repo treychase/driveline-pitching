@@ -25,6 +25,7 @@ import os
 import numpy as np
 
 import c3d_plot
+import theme
 from velocity_model import (
     PitchDataset,
     TrainedVelocityModel,
@@ -50,24 +51,24 @@ def _draw_velocity_panel(ax, predicted, pred_std, actual, lo, hi) -> None:
     ax.set_title("Actual vs. predicted velocity", fontweight="bold")
 
     # Background track
-    ax.axhspan(0.35, 0.65, color="0.92", zorder=0)
+    ax.axhspan(0.35, 0.65, color=theme.PANEL, zorder=0)
     # 95% credible interval band for the prediction
     ci_lo, ci_hi = predicted - 1.96 * pred_std, predicted + 1.96 * pred_std
-    ax.axvspan(ci_lo, ci_hi, ymin=0.30, ymax=0.70, color="tab:blue", alpha=0.18,
+    ax.axvspan(ci_lo, ci_hi, ymin=0.30, ymax=0.70, color=theme.ORANGE, alpha=0.18,
                zorder=1)
     # Predicted and actual markers
-    ax.axvline(predicted, 0.22, 0.78, color="tab:blue", lw=3, zorder=3)
-    ax.axvline(actual, 0.22, 0.78, color="tab:green", lw=3, zorder=3)
-    ax.plot([predicted], [0.5], "o", color="tab:blue", ms=9, zorder=4)
-    ax.plot([actual], [0.5], "D", color="tab:green", ms=9, zorder=4)
+    ax.axvline(predicted, 0.22, 0.78, color=theme.ORANGE, lw=3, zorder=3)
+    ax.axvline(actual, 0.22, 0.78, color=theme.SLATE, lw=3, zorder=3)
+    ax.plot([predicted], [0.5], "o", color=theme.ORANGE, ms=9, zorder=4)
+    ax.plot([actual], [0.5], "D", color=theme.SLATE, ms=9, zorder=4)
 
     err = predicted - actual
     ax.text(0.02, 0.92,
             f"Predicted: {predicted:.1f}  (95% CI {ci_lo:.1f}–{ci_hi:.1f}) mph",
-            transform=ax.transAxes, color="tab:blue", fontsize=10, va="top")
+            transform=ax.transAxes, color=theme.ORANGE_DARK, fontsize=10, va="top")
     ax.text(0.02, 0.10,
             f"Actual: {actual:.1f} mph     Error: {err:+.1f} mph",
-            transform=ax.transAxes, color="tab:green", fontsize=10, va="bottom")
+            transform=ax.transAxes, color=theme.SLATE, fontsize=10, va="bottom")
 
 
 def _draw_zscore_panel(fig, ax, zdf, top_n: int = 18, zlim: float = 3.0):
@@ -76,9 +77,12 @@ def _draw_zscore_panel(fig, ax, zdf, top_n: int = 18, zlim: float = 3.0):
     from matplotlib.cm import ScalarMappable
     from matplotlib.colors import Normalize
 
+    from matplotlib.colors import LinearSegmentedColormap
+
     sub = zdf.head(top_n).iloc[::-1]  # largest |z| on top
     norm = Normalize(vmin=-zlim, vmax=zlim)
-    cmap = mpl.colormaps["RdBu_r"]
+    cmap = LinearSegmentedColormap.from_list(
+        "wo_div", ["#2c5f8a", "#ffffff", theme.ORANGE])
     colors = cmap(norm(np.clip(sub["z"].to_numpy(), -zlim, zlim)))
 
     y = np.arange(len(sub))
@@ -115,7 +119,7 @@ def _load_force(dataset, session_pitch, frame_times):
     return aligned
 
 
-_LEAD_C, _REAR_C = "tab:green", "tab:orange"
+_LEAD_C, _REAR_C = theme.ORANGE, theme.SLATE
 
 
 def _draw_force_panel(ax_force, ax_bars, frame_times, fp, lead_leg, rear_leg):
@@ -253,6 +257,7 @@ def build_dashboard(
     import matplotlib.pyplot as plt
     import matplotlib.animation as animation
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    theme.apply_matplotlib()
 
     if trained is None:
         trained = train_velocity_model()
