@@ -54,18 +54,18 @@ def _draw_velocity_panel(ax, predicted, pred_std, actual, lo, hi) -> None:
     ax.axhspan(0.35, 0.65, color=theme.PANEL, zorder=0)
     # 95% credible interval band for the prediction
     ci_lo, ci_hi = predicted - 1.96 * pred_std, predicted + 1.96 * pred_std
-    ax.axvspan(ci_lo, ci_hi, ymin=0.30, ymax=0.70, color=theme.ORANGE, alpha=0.18,
+    ax.axvspan(ci_lo, ci_hi, ymin=0.30, ymax=0.70, color=theme.PLOT_A, alpha=0.18,
                zorder=1)
     # Predicted and actual markers
-    ax.axvline(predicted, 0.22, 0.78, color=theme.ORANGE, lw=3, zorder=3)
+    ax.axvline(predicted, 0.22, 0.78, color=theme.PLOT_A, lw=3, zorder=3)
     ax.axvline(actual, 0.22, 0.78, color=theme.SLATE, lw=3, zorder=3)
-    ax.plot([predicted], [0.5], "o", color=theme.ORANGE, ms=9, zorder=4)
+    ax.plot([predicted], [0.5], "o", color=theme.PLOT_A, ms=9, zorder=4)
     ax.plot([actual], [0.5], "D", color=theme.SLATE, ms=9, zorder=4)
 
     err = predicted - actual
     ax.text(0.02, 0.92,
             f"Predicted: {predicted:.1f}  (95% CI {ci_lo:.1f}–{ci_hi:.1f}) mph",
-            transform=ax.transAxes, color=theme.ORANGE_DARK, fontsize=10, va="top")
+            transform=ax.transAxes, color=theme.PLOT_A, fontsize=10, va="top")
     ax.text(0.02, 0.10,
             f"Actual: {actual:.1f} mph     Error: {err:+.1f} mph",
             transform=ax.transAxes, color=theme.SLATE, fontsize=10, va="bottom")
@@ -82,7 +82,7 @@ def _draw_zscore_panel(fig, ax, zdf, top_n: int = 18, zlim: float = 3.0):
     sub = zdf.head(top_n).iloc[::-1]  # largest |z| on top
     norm = Normalize(vmin=-zlim, vmax=zlim)
     cmap = LinearSegmentedColormap.from_list(
-        "wo_div", ["#2c5f8a", "#ffffff", theme.ORANGE])
+        "wo_div", theme.DIVERGING_MPL)
     colors = cmap(norm(np.clip(sub["z"].to_numpy(), -zlim, zlim)))
 
     y = np.arange(len(sub))
@@ -119,14 +119,14 @@ def _load_force(dataset, session_pitch, frame_times):
     return aligned
 
 
-_LEAD_C, _REAR_C = theme.ORANGE, theme.SLATE
+_LEAD_C, _REAR_C = theme.PLOT_A, theme.PLOT_B
 _HIGHLIGHT = "#d62728"  # colour a foot square flashes to at its peak force
 
 
 def _square_cmap():
     from matplotlib.colors import LinearSegmentedColormap
     return LinearSegmentedColormap.from_list(
-        "foot", [theme.PANEL, theme.ORANGE_LIGHT, theme.ORANGE])
+        "foot", ["#f4f7fb", "#92b7db", theme.PLOT_A])
 
 
 def _set_square(sq, txt, val, peak, unit):

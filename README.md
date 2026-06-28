@@ -176,29 +176,34 @@ for row in trained.model.coef_summary(trained.dataset.feature_names)[:10]:
 > they summarise. Pitchers are a mix of left- and right-handed; the model uses
 > biomechanics magnitudes and is not mirrored by handedness.
 
-## Interactive dashboard (white/orange) with a glossary tab
+## Interactive dashboard with tabs
 
-`dashboard_html.py` builds a **self-contained interactive HTML dashboard**,
-styled with a **white & orange** theme (`theme.py`), with two tabs:
+`dashboard_html.py` builds a **self-contained interactive HTML dashboard**. The
+**shell** (header, tabs, pitch picker, buttons) uses an orange theme; the
+**plots stay neutral** so colour carries data, not branding (`theme.py`). A
+**pitch picker** (applies to the Live delivery and Joint work tabs) selects the
+delivery. There are four tabs:
 
-* **Live delivery** — a **pitch picker** selects the delivery. A Plotly animation
-  shows the 3D pose on the dirt mound with a Play button, a frame slider, and a
-  **toggle for joint velocity vectors** on every joint (orange arrows from the
-  joint centres, computed from the landmark data). Scrubbing the delivery drives:
+* **Live delivery** — a Plotly animation of the 3D pose on the dirt mound with a
+  Play button, a frame slider, and a **toggle for joint velocity vectors** on
+  every joint. Scrubbing drives:
   * a synchronized **live ground-reaction-force** plot of the lead vs. rear leg
-    (labelled by the pitcher's actual **L/R** legs via handedness), with the
-    delivery **phases shaded** (wind-up, stride, arm cocking, acceleration,
-    deceleration) and a moving time cursor;
+    (by handedness), with the delivery **phases shaded** (wind-up, stride, arm
+    cocking, acceleration, deceleration) and a moving cursor;
   * two **foot-vGRF squares** (L/R) that show each foot's force every frame and
     **flash red ("◀ MAX") at that foot's peak**;
-  * the Bayesian-Lasso **velocity gauge**, the **biomechanics z-scores**, the
-    **joint work accumulated** during the delivery, and the **z-scores of joint
-    work** (energy generated) for the selected pitch.
+  * the velocity gauge and the biomechanics z-scores.
+* **Joint work** — joint work accumulated during the delivery and the
+  **z-scores of joint work** (energy generated) for the selected pitch.
+* **Model diagnostics** — Bayesian-Lasso diagnostics: predicted vs. actual
+  (train/test, selected pitches highlighted), residuals, the **posterior
+  coefficients with 95% credible intervals**, and the posterior distributions of
+  the noise σ and shrinkage λ².
 * **Glossary** — a searchable table with **full explanations of every
-  biomechanics variable**, plus the delivery events and coordinate/force
-  conventions, sourced from the OBP documentation.
+  biomechanics variable**.
 
 ![Live delivery tab](examples/dashboard_html_live.png)
+![Model diagnostics tab](examples/dashboard_html_diagnostics.png)
 ![Glossary tab](examples/dashboard_html_glossary.png)
 
 ```bash
@@ -212,8 +217,8 @@ python dashboard_html.py --pitches 1097_1,1031_2,1031_3 --out dashboard.html
 python dashboard_html.py --offline --out dashboard.html
 ```
 
-The animated **matplotlib** dashboard (`dashboard.py`) carries the same white/
-orange theme and the same live force panel: phase-shaded lead/rear GRF traces
+The animated **matplotlib** dashboard (`dashboard.py`) carries the same neutral
+plot styling and the same live force panel: phase-shaded lead/rear GRF traces
 with a moving cursor plus the two color-changing L/R foot squares next to the
 pose animation.
 

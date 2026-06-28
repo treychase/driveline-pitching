@@ -30,18 +30,18 @@ import theme
 from dashboard import _load_force, download_c3d_for_pitch
 from velocity_model import train_velocity_model
 
-_LEAD_C, _REAR_C = theme.SERIES_A, theme.SERIES_B
+_LEAD_C, _REAR_C = theme.PLOT_A, theme.PLOT_B
 _DIRT_SCALE = [[0.0, "#5b3a1e"], [0.5, "#8a5a30"], [1.0, "#b9854f"]]
 _VEC_SCALE = 0.03   # metres drawn per (m/s) of joint velocity
-_FOOT_STOPS = [(0.0, (255, 247, 239)), (0.5, (255, 176, 102)), (1.0, (255, 122, 0))]
-_FOOT_MAX_RGB = (214, 39, 39)   # red flash when a foot is at its peak force
+_FOOT_STOPS = theme.FOOT_STOPS
+_FOOT_MAX = theme.FOOT_MAX   # red flash when a foot is at its peak force
 
 
 def _foot_state(val, peak, unit):
     """Square colour, text colour, and label for a foot's current force."""
     frac = float(np.clip(val / peak, 0, 1)) if peak > 0 else 0.0
     if peak > 0 and val >= 0.99 * peak:
-        return ("rgb(214,39,39)", "white", f"<b>{val:.2f}</b><br>◀ MAX")
+        return (_FOOT_MAX, "white", f"<b>{val:.2f}</b><br>◀ MAX")
     for (f0, c0), (f1, c1) in zip(_FOOT_STOPS, _FOOT_STOPS[1:]):
         if frac <= f1:
             a = (frac - f0) / (f1 - f0) if f1 > f0 else 0
@@ -122,7 +122,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                                name="skeleton", hoverinfo="skip"), row=1, col=1)
     fin = np.isfinite(c0).all(axis=-1)
     fig.add_trace(go.Scatter3d(x=c0[fin, 0], y=c0[fin, 1], z=c0[fin, 2],
-                               mode="markers", marker=dict(size=3, color=theme.ORANGE_DARK),
+                               mode="markers", marker=dict(size=3, color=theme.PLOT_MUTED),
                                name="markers", hoverinfo="skip"), row=1, col=1)
     # 3,4: force traces
     fig.add_trace(go.Scatter(x=frame_times, y=lead, mode="lines",
@@ -145,11 +145,11 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     # 8,9: joint velocity vectors (shafts + tips) — visible by default
     (vx, vy, vz), (tx, ty, tz) = _vector_segments(vecs, f0)
     fig.add_trace(go.Scatter3d(x=vx, y=vy, z=vz, mode="lines",
-                               line=dict(color=theme.ORANGE, width=5),
+                               line=dict(color=theme.PLOT_ACCENT, width=5),
                                name="joint velocity", hoverinfo="skip"),
                   row=1, col=1)
     fig.add_trace(go.Scatter3d(x=tx, y=ty, z=tz, mode="markers",
-                               marker=dict(size=3, color=theme.ORANGE),
+                               marker=dict(size=3, color=theme.PLOT_ACCENT),
                                showlegend=False, hoverinfo="skip"), row=1, col=1)
     # 10,11: foot-vGRF squares (lead on top, rear below) in the third subplot
     lc, ltc, ltxt = _foot_state(lead[f0], float(np.nanmax(lead)), unit)
@@ -182,7 +182,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                                xref=xa, yref=ya, text=ph["label"], showarrow=False,
                                yanchor="top", textangle=0,
                                font=dict(size=8, color="#888"))
-        for key, color in [("fp", "#888"), ("mer", "#aaa"), ("br", theme.ORANGE_DARK)]:
+        for key, color in [("fp", "#888"), ("mer", "#aaa"), ("br", theme.PLOT_ACCENT)]:
             fr = fp["event_frames"].get(key)
             if fr is not None and fr < len(frame_times):
                 tx0 = float(frame_times[fr])
@@ -282,10 +282,10 @@ def build_velocity_figure(predicted, std, actual, velo_lo, velo_hi):
                         f"color:gray'>95% CI {predicted-1.96*std:.1f}–"
                         f"{predicted+1.96*std:.1f} · actual {actual:.1f}</span>"),
         gauge=dict(axis=dict(range=[velo_lo, velo_hi]),
-                   bar=dict(color=theme.ORANGE),
+                   bar=dict(color=theme.PLOT_A),
                    steps=[dict(range=[predicted-1.96*std, predicted+1.96*std],
-                               color="#ffe6cc")],
-                   threshold=dict(line=dict(color=theme.SLATE, width=4),
+                               color="#d7e6f2")],
+                   threshold=dict(line=dict(color=theme.PLOT_ACCENT, width=4),
                                   value=actual)),
     ))
     fig.update_layout(template=theme.plotly_template(), height=260,
@@ -327,8 +327,7 @@ def build_jointwork_time_figure(jw, frame_times):
     import plotly.graph_objects as go
 
     fig = go.Figure()
-    palette = [theme.ORANGE, theme.SLATE, theme.ORANGE_LIGHT, "#7a8794",
-               theme.ORANGE_DARK, "#9aa6b2", "#e0913f", "#1f3b52"]
+    palette = theme.PLOT_COLORWAY
     for k, (joint, w) in enumerate(jw.work.items()):
         fig.add_trace(go.Scatter(x=jw.time, y=w, mode="lines", name=joint,
                                  line=dict(color=palette[k % len(palette)], width=2)))
@@ -337,14 +336,104 @@ def build_jointwork_time_figure(jw, frame_times):
         ymax = max((np.nanmax(w) for w in jw.work.values()), default=1)
         ymin = min((np.nanmin(w) for w in jw.work.values()), default=0)
         fig.add_shape(type="line", x0=br, x1=br, y0=ymin, y1=ymax,
-                      line=dict(color=theme.ORANGE_DARK, dash="dash", width=1))
+                      line=dict(color=theme.PLOT_ACCENT, dash="dash", width=1))
         fig.add_annotation(x=br, y=ymax, text="BR", showarrow=False,
-                           font=dict(size=10, color=theme.ORANGE_DARK))
+                           font=dict(size=10, color=theme.PLOT_ACCENT))
     fig.update_layout(template=theme.plotly_template(), height=440,
                       margin=dict(l=10, r=10, t=40, b=30),
                       title="Joint work accumulated during the delivery (J)",
                       xaxis_title="time (s)", yaxis_title="energy generated (J)")
     return fig
+
+
+def build_diagnostics_figures(trained, highlight=None):
+    """Build Bayesian-Lasso model-diagnostic figures (global to the model)."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    model, ds = trained.model, trained.dataset
+    n = len(ds.y)
+    test_idx = {int(i) for i in trained.test_idx.tolist()}
+    pred = model.predict(ds.X)
+    actual = ds.y
+    sp_all = ds.poi["session_pitch"].astype(str).to_numpy()
+    is_test = np.array([i in test_idx for i in range(n)])
+    hl = set(highlight or [])
+    tmpl = theme.plotly_template()
+
+    # 1) Predicted vs actual
+    lo = float(min(actual.min(), pred.min())) - 1
+    hi = float(max(actual.max(), pred.max())) + 1
+    pva = go.Figure()
+    pva.add_trace(go.Scatter(
+        x=actual[~is_test], y=pred[~is_test], mode="markers", name="train",
+        marker=dict(color=theme.PLOT_MUTED, size=6, opacity=0.6),
+        text=sp_all[~is_test],
+        hovertemplate="train %{text}<br>actual %{x:.1f}, pred %{y:.1f}<extra></extra>"))
+    pva.add_trace(go.Scatter(
+        x=actual[is_test], y=pred[is_test], mode="markers", name="test (held out)",
+        marker=dict(color=theme.PLOT_A, size=7), text=sp_all[is_test],
+        hovertemplate="test %{text}<br>actual %{x:.1f}, pred %{y:.1f}<extra></extra>"))
+    pva.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", name="ideal",
+                             line=dict(color="#999", dash="dash")))
+    if hl:
+        m = np.array([s in hl for s in sp_all])
+        pva.add_trace(go.Scatter(
+            x=actual[m], y=pred[m], mode="markers+text", name="selected",
+            marker=dict(color=theme.PLOT_ACCENT, size=13, symbol="circle-open",
+                        line=dict(width=2)),
+            text=sp_all[m], textposition="top center"))
+    pva.update_layout(
+        template=tmpl, height=420, margin=dict(l=10, r=10, t=50, b=40),
+        title=(f"Predicted vs actual — test R²={trained.metrics['r2']:.2f}, "
+               f"RMSE={trained.metrics['rmse']:.1f}, MAE={trained.metrics['mae']:.1f} mph "
+               f"(n_train={trained.metrics['n_train']}, n_test={trained.metrics['n_test']})"),
+        xaxis_title="actual velocity (mph)", yaxis_title="predicted velocity (mph)")
+
+    # 2) Residuals vs predicted (test)
+    resid = actual - pred
+    rfig = go.Figure()
+    rfig.add_trace(go.Scatter(
+        x=pred[is_test], y=resid[is_test], mode="markers",
+        marker=dict(color=theme.PLOT_A, size=7), text=sp_all[is_test], name="test",
+        hovertemplate="%{text}<br>pred %{x:.1f}, resid %{y:+.1f}<extra></extra>"))
+    rfig.add_hline(y=0, line=dict(color="#999", dash="dash"))
+    rfig.update_layout(template=tmpl, height=360, margin=dict(l=10, r=10, t=40, b=40),
+                       title="Residuals vs predicted (held-out test)",
+                       xaxis_title="predicted (mph)", yaxis_title="residual (mph)")
+
+    # 3) Posterior coefficients (top 20 by |mean|, 95% CI)
+    rows = model.coef_summary(ds.feature_names)[:20][::-1]
+    names = [r["feature"] for r in rows]
+    means = np.array([r["mean"] for r in rows])
+    err_lo = means - np.array([r["ci_low"] for r in rows])
+    err_hi = np.array([r["ci_high"] for r in rows]) - means
+    cmax = float(np.abs(means).max()) or 1.0
+    coef = go.Figure(go.Bar(
+        x=means, y=names, orientation="h",
+        marker=dict(color=means, colorscale=theme.DIVERGING, cmin=-cmax, cmax=cmax),
+        error_x=dict(type="data", symmetric=False, array=err_hi, arrayminus=err_lo,
+                     color="#888", thickness=1)))
+    coef.update_layout(
+        template=tmpl, height=560, margin=dict(l=210, r=10, t=50, b=40),
+        title="Posterior coefficients (standardized) — top 20 by |mean|, 95% CI",
+        xaxis_title="standardized effect on velocity")
+    coef.update_yaxes(automargin=True)
+
+    # 4) Posterior distributions of σ (noise) and λ² (shrinkage)
+    sigma = np.sqrt(model.sigma2_samples_)
+    post = make_subplots(rows=1, cols=2,
+                         subplot_titles=("Residual noise σ (mph)", "Shrinkage λ²"))
+    post.add_trace(go.Histogram(x=sigma, marker=dict(color=theme.PLOT_A),
+                                nbinsx=40), row=1, col=1)
+    post.add_trace(go.Histogram(x=model.lambda2_samples_,
+                                marker=dict(color=theme.PLOT_B), nbinsx=40),
+                   row=1, col=2)
+    post.update_layout(template=tmpl, height=360, showlegend=False,
+                       margin=dict(l=10, r=10, t=50, b=30),
+                       title="Posterior distributions (Gibbs samples)")
+
+    return {"pva": pva, "resid": rfig, "coef": coef, "post": post}
 
 
 _PAGE = """<!DOCTYPE html>
@@ -364,10 +453,12 @@ _PAGE = """<!DOCTYPE html>
   .tablink.active {{ background: #ff7a00; color: #fff; font-weight: 600;
              border-color: #ff7a00; }}
   .tabcontent {{ padding: 16px 22px; }}
-  .picker {{ margin: 6px 0 14px; font-size: 14px; }}
+  .picker {{ padding: 10px 22px 0; font-size: 14px; background: #fff7ef;
+             border-bottom: 1px solid #ffe0c2; }}
   .picker select {{ font-size: 14px; padding: 6px 10px; border: 1px solid #ffb066;
              border-radius: 6px; color: #cc5f00; }}
   .pitch-head {{ font-size: 13px; color: #555; margin: 4px 0 10px; }}
+  h2 {{ color: #cc5f00; }}
   .row {{ display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;
           margin-top: 26px; }}
   .row > div {{ flex: 1; min-width: 320px; }}
@@ -389,29 +480,33 @@ _PAGE = """<!DOCTYPE html>
 <div class="tabs">
   <button class="tablink active" id="b-live" onclick="showTab('live')">
     Live delivery</button>
+  <button class="tablink" id="b-work" onclick="showTab('work')">Joint work</button>
+  <button class="tablink" id="b-diag" onclick="showTab('diag')">
+    Model diagnostics</button>
   <button class="tablink" id="b-gloss" onclick="showTab('gloss')">Glossary</button>
 </div>
-<div id="live" class="tabcontent">
-  <div class="picker">Pitch:
-    <select id="pitch-picker" onchange="pickPitch(this.value)">{options}</select>
-    <span style="color:#888">— animate, scrub, and toggle joint vectors</span>
-  </div>
-  {panels}
+<div class="picker" id="pickerbar">Pitch:
+  <select id="pitch-picker" onchange="pickPitch(this.value)">{options}</select>
+  <span style="color:#888">— applies to the Live delivery and Joint work tabs</span>
 </div>
-<div id="gloss" class="tabcontent" style="display:none">
-  {glossary}
-</div>
+<div id="live" class="tabcontent">{live_panels}</div>
+<div id="work" class="tabcontent" style="display:none">{work_panels}</div>
+<div id="diag" class="tabcontent" style="display:none">{diag}</div>
+<div id="gloss" class="tabcontent" style="display:none">{glossary}</div>
 <script>
+var TABS = ['live', 'work', 'diag', 'gloss'];
 function showTab(id) {{
-  document.getElementById('live').style.display = id==='live' ? 'block':'none';
-  document.getElementById('gloss').style.display = id==='gloss' ? 'block':'none';
-  document.getElementById('b-live').classList.toggle('active', id==='live');
-  document.getElementById('b-gloss').classList.toggle('active', id==='gloss');
+  TABS.forEach(function(t) {{
+    document.getElementById(t).style.display = (t===id) ? 'block' : 'none';
+    document.getElementById('b-'+t).classList.toggle('active', t===id);
+  }});
+  document.getElementById('pickerbar').style.display =
+    (id==='live' || id==='work') ? 'block' : 'none';
   window.dispatchEvent(new Event('resize'));
 }}
 function pickPitch(sp) {{
   document.querySelectorAll('.pitch-panel').forEach(function(p) {{
-    p.style.display = (p.id === 'pitch-' + sp) ? 'block' : 'none';
+    p.style.display = (p.dataset.sp === sp) ? 'block' : 'none';
   }});
   window.dispatchEvent(new Event('resize'));
 }}
@@ -478,27 +573,45 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
         state["first"] = False
         return fig.to_html(full_html=False, include_plotlyjs=inc, div_id=div_id)
 
-    panels, options = [], []
+    live_panels, work_panels, options = [], [], []
     for n, sp in enumerate(pitches):
         figs, head = _pitch_figures(ds, trained, sp, step, top_n)
         anim = emit(figs["anim"], f"anim-{sp}")
         velo = emit(figs["velo"], f"velo-{sp}")
         zbio = emit(figs["zbio"], f"zbio-{sp}")
-        jwt = emit(figs["jwt"], f"jwt-{sp}") if "jwt" in figs else ""
-        jwz = emit(figs["jwz"], f"jwz-{sp}") if "jwz" in figs else ""
         disp = "block" if n == 0 else "none"
-        panels.append(
-            f"<div class='pitch-panel' id='pitch-{sp}' style='display:{disp}'>"
-            f"<div class='pitch-head'>{head}</div>{anim}"
-            f"<div class='row'><div>{velo}</div><div>{zbio}</div></div>"
-            f"<div class='row'><div>{jwt}</div><div>{jwz}</div></div>"
-            f"</div>"
+        live_panels.append(
+            f"<div class='pitch-panel' data-sp='{sp}' id='live-{sp}' "
+            f"style='display:{disp}'><div class='pitch-head'>{head}</div>{anim}"
+            f"<div class='row'><div>{velo}</div><div>{zbio}</div></div></div>"
+        )
+        if "jwt" in figs:
+            jwt = emit(figs["jwt"], f"jwt-{sp}")
+            jwz = emit(figs["jwz"], f"jwz-{sp}")
+            wbody = f"<div class='row'><div>{jwt}</div><div>{jwz}</div></div>"
+        else:
+            wbody = "<p>No joint-work data for this pitch.</p>"
+        work_panels.append(
+            f"<div class='pitch-panel' data-sp='{sp}' id='work-{sp}' "
+            f"style='display:{disp}'><div class='pitch-head'>{head}</div>"
+            f"<h2>Joint work — energy generated per joint</h2>{wbody}</div>"
         )
         options.append(f"<option value='{sp}'>{sp}</option>")
 
+    # Model diagnostics (global to the fitted model; selected pitches highlighted)
+    d = build_diagnostics_figures(trained, highlight=pitches)
+    diag = (
+        "<h2>Model diagnostics — Bayesian Lasso</h2>"
+        + emit(d["pva"], "diag-pva")
+        + f"<div class='row'><div>{emit(d['resid'], 'diag-resid')}</div>"
+        + f"<div>{emit(d['post'], 'diag-post')}</div></div>"
+        + emit(d["coef"], "diag-coef")
+    )
+
     page = _PAGE.format(
         r2=trained.metrics["r2"], rmse=trained.metrics["rmse"],
-        options="".join(options), panels="".join(panels),
+        options="".join(options), live_panels="".join(live_panels),
+        work_panels="".join(work_panels), diag=diag,
         glossary=glossary.render_html(),
     )
     with open(out, "w") as fh:
