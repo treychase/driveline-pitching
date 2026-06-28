@@ -1,0 +1,6 @@
+numpy>=1.21
+matplotlib>=3.3
+# C3D reader: ezc3d is preferred (fast, robust). The pure-python `c3d`
+# package is used automatically as a fallback if ezc3d is unavailable.
+ezc3d>=1.5
+c3d>=0.5

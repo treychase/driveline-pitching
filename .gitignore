@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Downloaded / local motion-capture data
+c3d_data/
+*.c3d
+
+# Generated outputs (the curated demos in examples/ are force-added)
+*.mp4
+/c3d_animation.gif
