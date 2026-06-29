@@ -148,6 +148,27 @@ def load_joint_vectors(session_pitch, frame_times, data_dir="obp_data") -> dict:
     return out
 
 
+def joint_positions_at(session_pitch, t, data_dir="obp_data") -> dict:
+    """Joint-centre positions ``{joint: (3,)}`` at time ``t`` (lab/C3D frame).
+
+    Interpolated from ``landmarks.zip`` — no C3D needed, so it can drive a
+    static body view (e.g. the pose at ball release).
+    """
+    lm = _load_landmarks(data_dir)
+    g = lm[lm.session_pitch.astype(str) == str(session_pitch)].sort_values("time")
+    if g.empty:
+        raise KeyError(f"No landmarks for {session_pitch!r}")
+    tt = g["time"].to_numpy(float)
+    out = {}
+    for joint, stem in VECTOR_JOINTS.items():
+        cols = _axis_cols(stem)
+        if not all(c in g for c in cols):
+            continue
+        pos = g[cols].to_numpy(float)
+        out[joint] = np.array([float(np.interp(t, tt, pos[:, k])) for k in range(3)])
+    return out
+
+
 def work_summary(data_dir="obp_data", rebuild=False) -> pd.DataFrame:
     """Per-pitch joint work at ball release for the whole dataset (cached)."""
     cache = os.path.join(data_dir, "joint_work_summary.csv")

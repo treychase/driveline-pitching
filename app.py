@@ -25,7 +25,7 @@ import joint_kinetics as jk
 from dashboard import _load_force, download_c3d_for_pitch
 from velocity_model import train_velocity_model
 
-STEP = 6  # frame step for the pose animation (larger = lighter for the Space)
+STEP = 4  # frame step for the pose animation (smaller = smoother playback)
 ANIM_HEIGHT = 600  # px height of the animated pose+force panel
 
 
@@ -165,12 +165,23 @@ def work_figures(sp):
         return _WORK_CACHE[sp]
     try:
         jw = jk.load_joint_work(sp)
-        out = (dh.build_jointwork_time_figure(jw, None),
-               dh.build_jointwork_z_figure(jk.work_zscores(sp)))
+        zwork = jk.work_zscores(sp)
+        # 3D body shaded by joint work at ball release (sided by handedness).
+        body = None
+        try:
+            br = jw.events.get("br")
+            t = jw.time[-1] if br is None else br
+            pos = jk.joint_positions_at(sp, t)
+            handed = str(DS.poi.iloc[DS.index_of(sp)].get("p_throws", "R"))
+            body = dh.build_jointwork_body_figure(pos, zwork, handed)
+        except Exception:
+            body = None
+        out = (body, dh.build_jointwork_time_figure(jw, None),
+               dh.build_jointwork_z_figure(zwork))
         _WORK_CACHE[sp] = out
         return out
     except Exception:
-        return None, None
+        return None, None, None
 
 
 HEADER = f"""
@@ -213,6 +224,7 @@ def build_demo():
                     velo_plot = gr.Plot(label="Velocity")
                     zbio_plot = gr.Plot(label="Biomechanics z-scores")
             with gr.Tab("Joint work"):
+                jwbody_plot = gr.Plot(label="Joint work on the 3D body")
                 with gr.Row():
                     jwt_plot = gr.Plot(label="Joint work accumulated")
                     jwz_plot = gr.Plot(label="Joint work z-scores")
@@ -227,7 +239,7 @@ def build_demo():
                              label="Biomechanics glossary")
 
         live_out = [live_info, anim_plot, velo_plot, zbio_plot]
-        work_out = [jwt_plot, jwz_plot]
+        work_out = [jwbody_plot, jwt_plot, jwz_plot]
         # Picking a pitcher repopulates the pitch list and selects its first
         # pitch; that selection change drives the figure rebuild below.
         pitcher.change(_on_pitcher_change, pitcher, pitch)

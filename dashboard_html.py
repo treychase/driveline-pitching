@@ -341,6 +341,114 @@ def build_jointwork_z_figure(zwork):
                  hover_extra=[f"work = {w:.0f} J" for w in sub["work_J"]])
 
 
+# Limb segments shaded by the work generated at their driving joint, plus the
+# neutral structural segments that give the body its shape. Joint names match
+# joint_kinetics: ``shoulder``/``elbow`` are the throwing arm, ``glove_*`` the
+# glove arm, and ``lead``/``rear`` the legs — all in real lab-frame positions,
+# so the body is correctly sided for right- and left-handed pitchers.
+_BODY_LIMBS = [
+    ("shoulder", "elbow", "shoulder"),                 # throwing upper arm
+    ("elbow", "wrist", "elbow"),                        # throwing forearm
+    ("glove_shoulder", "glove_elbow", "glove_shoulder"),
+    ("glove_elbow", "glove_wrist", "glove_elbow"),
+    ("lead_hip", "lead_knee", "lead_hip"),
+    ("lead_knee", "lead_ankle", "lead_knee"),
+    ("rear_hip", "rear_knee", "rear_hip"),
+    ("rear_knee", "rear_ankle", "rear_knee"),
+]
+_BODY_NEUTRAL = [("shoulder", "glove_shoulder"), ("lead_hip", "rear_hip"),
+                 ("wrist", "hand"), ("glove_wrist", "glove_hand")]
+
+
+def build_jointwork_body_figure(positions, zwork, handed):
+    """A 3D stick body with each limb shaded by its joint's work z-score.
+
+    ``positions`` maps joint -> ``(3,)`` lab-frame coordinates (e.g. the pose at
+    ball release); ``zwork`` is the ``work_zscores`` DataFrame; ``handed`` is the
+    pitcher's throwing hand (``'R'``/``'L'``). Warm limbs generated more energy
+    than the dataset average at that joint, cool limbs less.
+    """
+    import plotly.graph_objects as go
+
+    zmap = dict(zip(zwork["joint"].astype(str), zwork["z"].astype(float)))
+    wmap = dict(zip(zwork["joint"].astype(str), zwork["work_J"].astype(float)))
+
+    def P(j):
+        p = positions.get(j)
+        return p if p is not None and np.isfinite(p).all() else None
+
+    fig = go.Figure()
+
+    # Neutral structural segments (shoulder line, pelvis, hands, spine).
+    nx, ny, nz = [], [], []
+    for a, b in _BODY_NEUTRAL:
+        pa, pb = P(a), P(b)
+        if pa is not None and pb is not None:
+            nx += [pa[0], pb[0], None]; ny += [pa[1], pb[1], None]
+            nz += [pa[2], pb[2], None]
+    sh = [P("shoulder"), P("glove_shoulder")]
+    hp = [P("lead_hip"), P("rear_hip")]
+    if all(p is not None for p in sh + hp):
+        smid, hmid = (sh[0] + sh[1]) / 2, (hp[0] + hp[1]) / 2
+        nx += [smid[0], hmid[0], None]; ny += [smid[1], hmid[1], None]
+        nz += [smid[2], hmid[2], None]
+    if nx:
+        fig.add_trace(go.Scatter3d(x=nx, y=ny, z=nz, mode="lines",
+                                   line=dict(color=theme.PLOT_MUTED, width=6),
+                                   showlegend=False, hoverinfo="skip"))
+
+    # Work-shaded limb segments (thick lines coloured by the driving joint's z).
+    for a, b, drv in _BODY_LIMBS:
+        pa, pb = P(a), P(b)
+        if pa is None or pb is None:
+            continue
+        z = zmap.get(drv)
+        if z is None:
+            fig.add_trace(go.Scatter3d(
+                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
+                line=dict(color=theme.PLOT_MUTED, width=12), showlegend=False,
+                hoverinfo="skip"))
+        else:
+            w = wmap.get(drv, float("nan"))
+            fig.add_trace(go.Scatter3d(
+                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
+                line=dict(color=[z, z], coloraxis="coloraxis", width=12),
+                hovertemplate=f"{drv}: {w:.0f} J (z={z:+.2f})<extra></extra>",
+                showlegend=False))
+
+    # Joint spheres coloured by work, carrying the shared colour axis.
+    jx, jy, jz, jc, jt = [], [], [], [], []
+    for j, z in zmap.items():
+        p = P(j)
+        if p is None:
+            continue
+        jx.append(p[0]); jy.append(p[1]); jz.append(p[2]); jc.append(z)
+        jt.append(f"{j}: {wmap.get(j, float('nan')):.0f} J (z={z:+.2f})")
+    if jx:
+        fig.add_trace(go.Scatter3d(
+            x=jx, y=jy, z=jz, mode="markers",
+            marker=dict(size=8, color=jc, coloraxis="coloraxis",
+                        line=dict(color="#fff", width=1)),
+            text=jt, hovertemplate="%{text}<extra></extra>", showlegend=False))
+
+    arm = "right" if str(handed).upper().startswith("R") else "left"
+    fig.update_layout(
+        template=theme.plotly_template(), height=560,
+        margin=dict(l=0, r=0, t=50, b=0),
+        title=(f"Joint work on the body — {arm}-handed pitcher "
+               f"(warm = more energy generated vs dataset)"),
+        coloraxis=dict(colorscale=theme.DIVERGING, cmin=-3, cmax=3,
+                       colorbar=dict(title="work z")),
+        scene=dict(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
+                   zaxis_title="Z up (m)",
+                   xaxis=dict(backgroundcolor="#fafafa"),
+                   yaxis=dict(backgroundcolor="#fafafa"),
+                   zaxis=dict(backgroundcolor="#f2f2f2"),
+                   camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))),
+    )
+    return fig
+
+
 def build_jointwork_time_figure(jw, frame_times):
     import plotly.graph_objects as go
 
