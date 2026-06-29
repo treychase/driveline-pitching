@@ -12,6 +12,8 @@ Run locally with ``python app.py`` (serves on http://localhost:7860).
 
 from __future__ import annotations
 
+import html as _html
+
 import numpy as np
 import gradio as gr
 
@@ -23,13 +25,134 @@ import joint_kinetics as jk
 from dashboard import _load_force, download_c3d_for_pitch
 from velocity_model import train_velocity_model
 
-STEP = 6  # frame step for the pose animation (larger = lighter for the Space)
+STEP = 6  # frames skipped per animation step (larger = fewer frames = faster)
+ANIM_HEIGHT = 600  # px height of the animated pose+force panel
+
+
+# Injected into the animation iframe: a Loop toggle that replays the delivery
+# continuously (Plotly's updatemenu can't loop on its own). It restarts the
+# animation whenever one pass finishes while Loop is on.
+_LOOP_JS = """
+<script>
+(function() {
+  function init() {
+    var gd = document.querySelector('.js-plotly-plot');
+    if (!gd || !window.Plotly) { return setTimeout(init, 200); }
+    var loop = false;
+    var opts = {frame: {duration: %(ms)d, redraw: true},
+                transition: {duration: 0}, mode: 'immediate'};
+    var btn = document.createElement('button');
+    btn.textContent = '\\u21BB Loop';
+    btn.style.cssText = 'position:absolute;top:8px;left:200px;z-index:20;' +
+      'padding:5px 12px;font:13px -apple-system,sans-serif;border:1px solid #ccc;' +
+      'border-radius:6px;background:#fff;cursor:pointer;';
+    var host = gd.parentNode; host.style.position = 'relative';
+    host.appendChild(btn);
+    btn.onclick = function() {
+      loop = !loop;
+      btn.style.background = loop ? '#ffd9b3' : '#fff';
+      btn.style.fontWeight = loop ? '600' : '400';
+      if (loop) { Plotly.animate(gd, null, Object.assign({fromcurrent: false}, opts)); }
+      else { Plotly.animate(gd, [null], {mode: 'immediate'}); }
+    };
+    gd.on('plotly_animated', function() {
+      if (loop) { Plotly.animate(gd, null, Object.assign({fromcurrent: false}, opts)); }
+    });
+  }
+  init();
+})();
+</script>
+"""
+
+
+def _plotly_iframe(fig, height=ANIM_HEIGHT, loop_ms=20):
+    """Render a Plotly figure as a self-contained iframe (with a Loop toggle).
+
+    Gradio's ``gr.Plot`` does not register Plotly animation *frames* on the
+    graph div, so the Play button and frame slider do nothing. Embedding the
+    figure as standalone HTML inside an ``<iframe srcdoc>`` runs Plotly in its
+    own document — frames register and the animation plays. Plotly.js is loaded
+    from the CDN (cached across pitches, so re-selection stays snappy). A small
+    injected script adds a Loop button.
+    """
+    doc = fig.to_html(full_html=True, include_plotlyjs="cdn",
+                      default_width="100%", default_height="100%",
+                      config={"displaylogo": False, "responsive": True})
+    doc = doc.replace("</body>", _LOOP_JS % {"ms": loop_ms} + "</body>")
+    return (f'<iframe srcdoc="{_html.escape(doc, quote=True)}" '
+            f'style="width:100%;height:{height}px;border:none" '
+            f'loading="lazy"></iframe>')
+
+
+# Per-pitch result caches so re-selecting a pitch is instant (the first view
+# downloads + parses the C3D and builds the figures; later views are cached).
+_LIVE_CACHE: dict[str, tuple] = {}
+_WORK_CACHE: dict[str, tuple] = {}
 
 # Train once at startup; reused across requests.
 TRAINED = train_velocity_model()
 DS = TRAINED.dataset
-PITCHES = DS.poi["session_pitch"].astype(str).tolist()
+
+
+def _build_pitcher_index(ds):
+    """Group every pitch by its pitcher so the UI can offer a two-step picker.
+
+    Returns ``(pitchers, sp_to_user)`` where ``pitchers`` maps a pitcher id
+    (the ``user`` column from ``metadata.csv``) to a dict with display info and
+    that pitcher's list of pitches ``[(session_pitch, velo, pitch_type), ...]``.
+    """
+    poi = ds.poi
+    user_by_sp = dict(zip(ds.meta["session_pitch"].astype(str),
+                          ds.meta["user"].astype(str)))
+    level_by_user = dict(zip(ds.meta["user"].astype(str),
+                             ds.meta["playing_level"].astype(str)))
+    pitchers: dict[str, dict] = {}
+    for _, r in poi.iterrows():
+        sp = str(r["session_pitch"])
+        user = user_by_sp.get(sp, "unknown")
+        info = pitchers.setdefault(user, {
+            "handed": str(r.get("p_throws", "?")),
+            "level": level_by_user.get(user, "?"),
+            "pitches": [],
+        })
+        info["pitches"].append((sp, float(r["pitch_speed_mph"]),
+                                str(r.get("pitch_type", "?"))))
+    for info in pitchers.values():
+        info["pitches"].sort(key=lambda t: t[0])
+    sp_to_user = {sp: u for u, info in pitchers.items()
+                  for sp, _, _ in info["pitches"]}
+    return pitchers, sp_to_user
+
+
+PITCHERS, SP_TO_USER = _build_pitcher_index(DS)
+PITCHER_IDS = sorted(PITCHERS, key=lambda u: (0, int(u)) if u.isdigit() else (1, u))
+
+
+def _pitcher_label(user):
+    info = PITCHERS[user]
+    velos = [v for _, v, _ in info["pitches"]]
+    n = len(velos)
+    return (f"Pitcher {user} · {info['handed']}HP · {info['level']} · "
+            f"{n} pitch{'es' if n != 1 else ''} · {min(velos):.0f}–{max(velos):.0f} mph")
+
+
+def _pitcher_choices():
+    return [(_pitcher_label(u), u) for u in PITCHER_IDS]
+
+
+def _pitch_choices(user):
+    return [(f"{sp} · {pt} · {v:.1f} mph", sp)
+            for sp, v, pt in PITCHERS[user]["pitches"]]
+
+
+# Default to the first held-out test pitch (falling back to the first pitcher).
 DEFAULT_PITCH = str(DS.poi["session_pitch"].iloc[int(TRAINED.test_idx[0])])
+if DEFAULT_PITCH in SP_TO_USER:
+    DEFAULT_USER = SP_TO_USER[DEFAULT_PITCH]
+else:
+    DEFAULT_USER = PITCHER_IDS[0]
+    DEFAULT_PITCH = PITCHERS[DEFAULT_USER]["pitches"][0][0]
+
 DIAG = dh.build_diagnostics_figures(TRAINED, highlight=[DEFAULT_PITCH])
 
 
@@ -44,7 +167,9 @@ def _pitch_header(sp):
 
 
 def live_figures(sp):
-    """Build the Live-delivery figures for one pitch."""
+    """Build the Live-delivery views for one pitch (cached per pitch)."""
+    if sp in _LIVE_CACHE:
+        return _LIVE_CACHE[sp]
     try:
         predicted, std = TRAINED.predict_pitch(sp)
         actual = DS.actual_velocity(sp)
@@ -59,47 +184,119 @@ def live_figures(sp):
             vecs = {}
         lo = float(min(DS.y.min(), predicted - 3 * std) - 2)
         hi = float(max(DS.y.max(), predicted + 3 * std) + 2)
-        anim = dh.build_pose_force_figure(markers, fp, vecs, ft, lead, rear, STEP,
-                                          "anim")
+        anim_fig = dh.build_pose_force_figure(markers, fp, vecs, ft, lead, rear,
+                                              STEP, "anim")
+        # Embed as an iframe so the Play button / frame slider / Loop animate.
+        loop_ms = max(1, int(round(1000 * STEP / markers.rate)))
+        anim = _plotly_iframe(anim_fig, height=ANIM_HEIGHT, loop_ms=loop_ms)
         velo = dh.build_velocity_figure(predicted, std, actual, lo, hi)
         zbio = dh.build_zscore_figure(DS.zscores(sp))
-        return _pitch_header(sp), anim, velo, zbio
+        out = (_pitch_header(sp), anim, velo, zbio)
+        _LIVE_CACHE[sp] = out
+        return out
     except Exception as exc:  # keep the Space responsive on any data hiccup
-        return f"Could not build pitch {sp}: {exc}", None, None, None
+        return f"Could not build pitch {sp}: {exc}", "", None, None
 
 
 def work_figures(sp):
-    """Build the Joint-work figures for one pitch."""
+    """Build the Joint-work figures for one pitch (cached per pitch)."""
+    if sp in _WORK_CACHE:
+        return _WORK_CACHE[sp]
     try:
         jw = jk.load_joint_work(sp)
-        return (dh.build_jointwork_time_figure(jw, None),
-                dh.build_jointwork_z_figure(jk.work_zscores(sp)))
+        zwork = jk.work_zscores(sp)
+        # 3D body shaded by joint work at ball release (sided by handedness).
+        body = None
+        try:
+            br = jw.events.get("br")
+            t = jw.time[-1] if br is None else br
+            pos = jk.joint_positions_at(sp, t)
+            handed = str(DS.poi.iloc[DS.index_of(sp)].get("p_throws", "R"))
+            # Use the real C3D pose at ball release as the body.
+            markers = c3d_plot.load_c3d(download_c3d_for_pitch(DS, sp))
+            ft = np.arange(markers.n_frames) / markers.rate
+            br_frame = int(np.argmin(np.abs(ft - t)))
+            body = dh.build_jointwork_body_figure(pos, zwork, handed,
+                                                  markers=markers, frame=br_frame)
+        except Exception:
+            body = None
+        out = (body, dh.build_jointwork_time_figure(jw, None),
+               dh.build_jointwork_z_figure(zwork))
+        _WORK_CACHE[sp] = out
+        return out
     except Exception:
-        return None, None
+        return None, None, None
 
 
-HEADER = f"""
-# OpenBiomechanics Pitching Dashboard
-Bayesian-Lasso velocity prediction · live force plates · joint work & velocity
-vectors. Model: **R²={TRAINED.metrics['r2']:.2f}, RMSE={TRAINED.metrics['rmse']:.1f} mph**
-(held-out test). Data source: {data_sources.describe()}.
+HERO = f"""
+<div id="hero">
+  <h1>⚾ OpenBiomechanics Pitching Dashboard</h1>
+  <p>Choose any of <b>{len(PITCHER_IDS)} pitchers</b> ({len(SP_TO_USER)} pitches) —
+     Bayesian-Lasso velocity prediction · live force plates · joint work &amp;
+     velocity vectors.</p>
+  <div class="badges">
+    <span>R² = {TRAINED.metrics['r2']:.2f}</span>
+    <span>RMSE = {TRAINED.metrics['rmse']:.1f} mph (held-out)</span>
+    <span>{data_sources.describe().split(' (')[0]}</span>
+  </div>
+</div>
+"""
+
+CSS = """
+.gradio-container { max-width: 1380px !important; margin: 0 auto !important; }
+#hero { background: linear-gradient(100deg, #ff7a00, #cc5f00); color: #fff;
+        padding: 18px 24px; border-radius: 14px; margin-bottom: 6px;
+        box-shadow: 0 2px 10px rgba(204,95,0,.18); }
+#hero h1 { margin: 0; font-size: 23px; font-weight: 700; }
+#hero p  { margin: 6px 0 0; font-size: 14px; line-height: 1.45; opacity: .96; }
+#hero .badges { margin-top: 11px; display: flex; gap: 8px; flex-wrap: wrap; }
+#hero .badges span { background: rgba(255,255,255,.18); padding: 3px 11px;
+        border-radius: 999px; font-size: 12px; font-weight: 600;
+        border: 1px solid rgba(255,255,255,.28); }
+#pickers { background: #fff7ef; border: 1px solid #ffe0c2; border-radius: 12px;
+           padding: 12px 14px; }
+.pitch-head { font-size: 13px; color: #555; margin: 2px 0 6px; }
+.anim-wrap { border: 1px solid #eee; border-radius: 12px; overflow: hidden; }
+footer { display: none !important; }
 """
 
 
+def _on_pitcher_change(user):
+    """Refresh the pitch dropdown for the newly selected pitcher.
+
+    Setting a new ``value`` here also fires the pitch dropdown's ``change``
+    event, which rebuilds the figures — so the selectors stay in sync without
+    recomputing the (expensive) pose animation twice.
+    """
+    choices = _pitch_choices(user)
+    value = choices[0][1] if choices else None
+    return gr.update(choices=choices, value=value)
+
+
 def build_demo():
-    with gr.Blocks(title="OBP Pitching Dashboard") as demo:
-        gr.Markdown(HEADER)
-        pitch = gr.Dropdown(choices=PITCHES, value=DEFAULT_PITCH, label="Pitch",
-                            info="Applies to Live delivery and Joint work")
+    theme = gr.themes.Soft(primary_hue="orange", secondary_hue="orange",
+                           neutral_hue="slate")
+    with gr.Blocks(title="OBP Pitching Dashboard", theme=theme, css=CSS) as demo:
+        gr.HTML(HERO)
+        with gr.Group(elem_id="pickers"):
+            with gr.Row():
+                pitcher = gr.Dropdown(choices=_pitcher_choices(), value=DEFAULT_USER,
+                                      label="Pitcher", filterable=True, scale=1,
+                                      info="Type to search across all pitchers")
+                pitch = gr.Dropdown(choices=_pitch_choices(DEFAULT_USER),
+                                    value=DEFAULT_PITCH, label="Pitch",
+                                    filterable=True, scale=1,
+                                    info="Applies to Live delivery and Joint work")
 
         with gr.Tabs():
             with gr.Tab("Live delivery"):
-                live_info = gr.Markdown()
-                anim_plot = gr.Plot(label="3D delivery + live force plates")
+                live_info = gr.Markdown(elem_classes="pitch-head")
+                anim_plot = gr.HTML(elem_classes="anim-wrap")
                 with gr.Row():
                     velo_plot = gr.Plot(label="Velocity")
                     zbio_plot = gr.Plot(label="Biomechanics z-scores")
             with gr.Tab("Joint work"):
+                jwbody_plot = gr.Plot(label="Joint work on the 3D body")
                 with gr.Row():
                     jwt_plot = gr.Plot(label="Joint work accumulated")
                     jwz_plot = gr.Plot(label="Joint work z-scores")
@@ -114,7 +311,10 @@ def build_demo():
                              label="Biomechanics glossary")
 
         live_out = [live_info, anim_plot, velo_plot, zbio_plot]
-        work_out = [jwt_plot, jwz_plot]
+        work_out = [jwbody_plot, jwt_plot, jwz_plot]
+        # Picking a pitcher repopulates the pitch list and selects its first
+        # pitch; that selection change drives the figure rebuild below.
+        pitcher.change(_on_pitcher_change, pitcher, pitch)
         pitch.change(live_figures, pitch, live_out)
         pitch.change(work_figures, pitch, work_out)
         demo.load(live_figures, pitch, live_out)
