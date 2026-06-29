@@ -170,14 +170,27 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                              textposition="middle center", showlegend=False,
                              hoverinfo="skip"), row=1, col=3)
 
+    # Delivery-phase spans, used to shade the GRF plot AND to tint the live 3D
+    # backdrop frame-by-frame as the delivery plays.
+    import force_plate as _fp
+    _BG_NEUTRAL = "#f4f4f4"
+    phase_spans = []
+    if fp is not None:
+        ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
+                    if fr < len(frame_times)}
+        phase_spans = _fp.delivery_phases(ev_times, float(frame_times[-1]))
+
+    def _phase_bg(t):
+        for ph in phase_spans:
+            if ph["t0"] <= t <= ph["t1"]:
+                return ph["color"]
+        return _BG_NEUTRAL
+
     # event lines + shaded delivery phases on the force subplot
     xa = fig.data[3].xaxis or "x"
     ya = fig.data[3].yaxis or "y"
     if fp is not None:
-        import force_plate as _fp
-        ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
-                    if fr < len(frame_times)}
-        for ph in _fp.delivery_phases(ev_times, float(frame_times[-1])):
+        for ph in phase_spans:
             fig.add_shape(type="rect", x0=ph["t0"], x1=ph["t1"], y0=0, y1=ymax,
                           xref=xa, yref=ya, line=dict(width=0),
                           fillcolor=ph["color"], opacity=0.85, layer="below")
@@ -205,7 +218,10 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         tt = float(frame_times[f])
         lc, ltc, ltxt = _foot_state(lead[f], lead_peak, unit)
         rc, rtc, rtxt = _foot_state(rear[f], rear_peak, unit)
-        anim_frames.append(go.Frame(name=str(f), data=[
+        bg = _phase_bg(tt)
+        anim_frames.append(go.Frame(name=str(f), layout=dict(scene=dict(
+            xaxis=dict(backgroundcolor=bg), yaxis=dict(backgroundcolor=bg),
+            zaxis=dict(backgroundcolor=bg))), data=[
             go.Scatter3d(x=sx, y=sy, z=sz),
             go.Scatter3d(x=coords[fin, 0], y=coords[fin, 1], z=coords[fin, 2]),
             go.Scatter(x=[tt, tt], y=[0, ymax]),
@@ -234,11 +250,15 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.add_annotation(x=0.5, y=0.50, xref=xb, yref=yb, showarrow=False,
                        text=f"<b>{rear_leg}</b> rear", font=dict(size=10, color=_REAR_C))
 
+    bg0 = _phase_bg(float(frame_times[f0]))
     fig.update_scenes(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
                       zaxis_title="Z up (m)",
-                      xaxis=dict(backgroundcolor="#fafafa"),
-                      yaxis=dict(backgroundcolor="#fafafa"),
-                      zaxis=dict(backgroundcolor="#f2f2f2"),
+                      # uirevision keeps the user's camera while the backdrop
+                      # colour animates with the delivery phase.
+                      uirevision="pose",
+                      xaxis=dict(backgroundcolor=bg0),
+                      yaxis=dict(backgroundcolor=bg0),
+                      zaxis=dict(backgroundcolor=bg0),
                       camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)))
     fig.update_xaxes(title_text="time (s)", row=1, col=2)
     fig.update_yaxes(title_text=f"vertical GRF ({unit})", range=[0, ymax],
