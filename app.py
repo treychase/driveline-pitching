@@ -25,7 +25,7 @@ import joint_kinetics as jk
 from dashboard import _load_force, download_c3d_for_pitch
 from velocity_model import train_velocity_model
 
-STEP = 4  # frame step for the pose animation (smaller = smoother playback)
+STEP = 6  # frames skipped per animation step (larger = fewer frames = faster)
 ANIM_HEIGHT = 600  # px height of the animated pose+force panel
 
 

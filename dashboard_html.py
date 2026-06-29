@@ -89,6 +89,18 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     frames_idx = list(range(0, markers.n_frames, step))
     f0 = frames_idx[0]
 
+    # Head reference: a sphere at the centroid of the head markers each frame.
+    _label_ix = {l: i for i, l in enumerate(markers.labels)}
+    head_idx = [_label_ix[l] for l in ("LFHD", "RFHD", "LBHD", "RBHD")
+                if l in _label_ix]
+
+    def _head_center(coords):
+        if not head_idx:
+            return None
+        pts = coords[head_idx]
+        return np.nanmean(pts, axis=0) if np.isfinite(pts).any() else \
+            np.array([np.nan, np.nan, np.nan])
+
     use_bw = fp is not None and fp.get("has_bw")
     suffix = "_bw" if use_bw else ""
     unit = "BW" if use_bw else "N"
@@ -108,8 +120,10 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         horizontal_spacing=0.04,
     )
 
-    # 0: mound
-    mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers)
+    # 0: mound (coarser tessellation than the static plots — it is re-rasterised
+    # every animation frame, so fewer faces = faster, smoother playback).
+    mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers, sectors=32,
+                                                               rings=10)
     fig.add_trace(go.Mesh3d(x=mx, y=my, z=mz, i=mi, j=mj, k=mk, intensity=inten,
                             colorscale=_DIRT_SCALE, showscale=False, opacity=1.0,
                             lighting=dict(ambient=0.6, diffuse=0.8, roughness=0.9),
@@ -169,11 +183,27 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                              text=[rtxt], textfont=dict(color=rtc, size=12),
                              textposition="middle center", showlegend=False,
                              hoverinfo="skip"), row=1, col=3)
+    # 12: head sphere (reference) at the head-marker centroid
+    has_head = bool(head_idx)
+    if has_head:
+        hc0 = _head_center(c0)
+        fig.add_trace(go.Scatter3d(x=[hc0[0]], y=[hc0[1]], z=[hc0[2]],
+                                   mode="markers",
+                                   marker=dict(size=16, color=theme.SLATE,
+                                               opacity=0.95,
+                                               line=dict(color="#fff", width=1)),
+                                   name="head", showlegend=False,
+                                   hoverinfo="skip"), row=1, col=1)
 
     # Delivery-phase spans, used to shade the GRF plot AND to tint the live 3D
     # backdrop frame-by-frame as the delivery plays.
     import force_plate as _fp
-    _BG_NEUTRAL = "#f4f4f4"
+    _BG_NEUTRAL = "#ededed"
+    # Saturated wall tints (stronger than the GRF shading) so the backdrop
+    # colour change reads clearly on the 3D box during playback.
+    _BG_STRONG = {"Wind-up": "#b9c7da", "Stride": "#a9dab5",
+                  "Arm cocking": "#f1d771", "Acceleration": "#ffb066",
+                  "Deceleration": "#ec9a9a"}
     phase_spans = []
     if fp is not None:
         ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
@@ -183,7 +213,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     def _phase_bg(t):
         for ph in phase_spans:
             if ph["t0"] <= t <= ph["t1"]:
-                return ph["color"]
+                return _BG_STRONG.get(ph["label"], ph["color"])
         return _BG_NEUTRAL
 
     # event lines + shaded delivery phases on the force subplot
@@ -219,9 +249,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         lc, ltc, ltxt = _foot_state(lead[f], lead_peak, unit)
         rc, rtc, rtxt = _foot_state(rear[f], rear_peak, unit)
         bg = _phase_bg(tt)
-        anim_frames.append(go.Frame(name=str(f), layout=dict(scene=dict(
-            xaxis=dict(backgroundcolor=bg), yaxis=dict(backgroundcolor=bg),
-            zaxis=dict(backgroundcolor=bg))), data=[
+        frame_data = [
             go.Scatter3d(x=sx, y=sy, z=sz),
             go.Scatter3d(x=coords[fin, 0], y=coords[fin, 1], z=coords[fin, 2]),
             go.Scatter(x=[tt, tt], y=[0, ymax]),
@@ -237,7 +265,15 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                        marker=dict(symbol="square", size=64, color=rc,
                                    line=dict(color="#888", width=1)),
                        text=[rtxt], textfont=dict(color=rtc, size=12)),
-        ], traces=[1, 2, 5, 6, 7, 8, 9, 10, 11]))
+        ]
+        frame_traces = [1, 2, 5, 6, 7, 8, 9, 10, 11]
+        if has_head:
+            hc = _head_center(coords)
+            frame_data.append(go.Scatter3d(x=[hc[0]], y=[hc[1]], z=[hc[2]]))
+            frame_traces.append(12)
+        anim_frames.append(go.Frame(name=str(f), layout=dict(scene=dict(
+            xaxis=dict(backgroundcolor=bg), yaxis=dict(backgroundcolor=bg),
+            zaxis=dict(backgroundcolor=bg))), data=frame_data, traces=frame_traces))
     fig.frames = anim_frames
 
     # Hide the foot-square subplot axes and label the two squares.
