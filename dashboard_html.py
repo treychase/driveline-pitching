@@ -243,6 +243,9 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.update_xaxes(title_text="time (s)", row=1, col=2)
     fig.update_yaxes(title_text=f"vertical GRF ({unit})", range=[0, ymax],
                      row=1, col=2)
+    # One animation frame spans ``step`` captured frames, so this many ms per
+    # frame plays the delivery back at real time; "Fast" plays at ~2x.
+    rt_ms = max(1, int(round(1000 * step / markers.rate)))
     fig.update_layout(
         template=theme.plotly_template(), height=620,
         margin=dict(l=0, r=0, t=95, b=70),
@@ -256,12 +259,16 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
             dict(type="buttons", direction="right", showactive=False,
                  x=0.0, y=1.16, xanchor="left", yanchor="top", bgcolor="#fff",
                  buttons=[
-                     dict(label="▶ Play", method="animate", args=[None, dict(
-                         frame=dict(duration=40, redraw=True), fromcurrent=True,
-                         transition=dict(duration=0))]),
+                     dict(label=lbl, method="animate", args=[None, dict(
+                         frame=dict(duration=dur, redraw=True), fromcurrent=True,
+                         transition=dict(duration=0))])
+                     for lbl, dur in (("▶ Play", rt_ms),
+                                      ("▶▶ Fast", max(1, rt_ms // 2)))
+                 ] + [
                      dict(label="⏸ Pause", method="animate", args=[[None], dict(
                          frame=dict(duration=0, redraw=False), mode="immediate")]),
-                 ]),
+                 ],
+                 ),
             # Joint-vector toggle, top-right, clear of the titles.
             dict(type="buttons", direction="right", showactive=True,
                  x=1.0, y=1.16, xanchor="right", yanchor="top", bgcolor="#fff",
