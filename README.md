@@ -4,7 +4,7 @@ emoji: ⚾
 colorFrom: yellow
 colorTo: gray
 sdk: gradio
-sdk_version: 4.44.1
+sdk_version: 6.19.0
 python_version: "3.12"
 app_file: app.py
 pinned: false
@@ -298,9 +298,9 @@ whole dataset is browsable without rebuilding anything.
 
 This repository is a ready-to-deploy **HuggingFace Space**: the YAML
 front-matter at the top of this file declares `sdk: gradio`,
-`sdk_version: 4.44.1`, and `app_file: app.py`, so the Space runtime installs
-Gradio and runs `app.py` automatically, then installs `requirements.txt` for the
-rest. Deploy it by pushing this repo to a Space:
+`sdk_version: 6.19.0`, `python_version: "3.12"`, and `app_file: app.py`, so the
+Space runtime installs Gradio and runs `app.py` automatically, then installs
+`requirements.txt` for the rest. Deploy it by pushing this repo to a Space:
 
 ```bash
 # One-time: create a Gradio Space named "driveline-pitching", then point a
