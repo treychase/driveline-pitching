@@ -1,7 +1,7 @@
 ---
 title: OpenBiomechanics Pitching Dashboard
 emoji: ⚾
-colorFrom: orange
+colorFrom: yellow
 colorTo: gray
 sdk: gradio
 sdk_version: 4.44.1
