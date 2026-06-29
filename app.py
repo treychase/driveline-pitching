@@ -184,12 +184,36 @@ def work_figures(sp):
         return None, None, None
 
 
-HEADER = f"""
-# OpenBiomechanics Pitching Dashboard
-Choose any of **{len(PITCHER_IDS)} pitchers** ({len(SP_TO_USER)} pitches) below —
-Bayesian-Lasso velocity prediction · live force plates · joint work & velocity
-vectors. Model: **R²={TRAINED.metrics['r2']:.2f}, RMSE={TRAINED.metrics['rmse']:.1f} mph**
-(held-out test). Data source: {data_sources.describe()}.
+HERO = f"""
+<div id="hero">
+  <h1>⚾ OpenBiomechanics Pitching Dashboard</h1>
+  <p>Choose any of <b>{len(PITCHER_IDS)} pitchers</b> ({len(SP_TO_USER)} pitches) —
+     Bayesian-Lasso velocity prediction · live force plates · joint work &amp;
+     velocity vectors.</p>
+  <div class="badges">
+    <span>R² = {TRAINED.metrics['r2']:.2f}</span>
+    <span>RMSE = {TRAINED.metrics['rmse']:.1f} mph (held-out)</span>
+    <span>{data_sources.describe().split(' (')[0]}</span>
+  </div>
+</div>
+"""
+
+CSS = """
+.gradio-container { max-width: 1380px !important; margin: 0 auto !important; }
+#hero { background: linear-gradient(100deg, #ff7a00, #cc5f00); color: #fff;
+        padding: 18px 24px; border-radius: 14px; margin-bottom: 6px;
+        box-shadow: 0 2px 10px rgba(204,95,0,.18); }
+#hero h1 { margin: 0; font-size: 23px; font-weight: 700; }
+#hero p  { margin: 6px 0 0; font-size: 14px; line-height: 1.45; opacity: .96; }
+#hero .badges { margin-top: 11px; display: flex; gap: 8px; flex-wrap: wrap; }
+#hero .badges span { background: rgba(255,255,255,.18); padding: 3px 11px;
+        border-radius: 999px; font-size: 12px; font-weight: 600;
+        border: 1px solid rgba(255,255,255,.28); }
+#pickers { background: #fff7ef; border: 1px solid #ffe0c2; border-radius: 12px;
+           padding: 12px 14px; }
+.pitch-head { font-size: 13px; color: #555; margin: 2px 0 6px; }
+.anim-wrap { border: 1px solid #eee; border-radius: 12px; overflow: hidden; }
+footer { display: none !important; }
 """
 
 
@@ -206,20 +230,24 @@ def _on_pitcher_change(user):
 
 
 def build_demo():
-    with gr.Blocks(title="OBP Pitching Dashboard") as demo:
-        gr.Markdown(HEADER)
-        with gr.Row():
-            pitcher = gr.Dropdown(choices=_pitcher_choices(), value=DEFAULT_USER,
-                                  label="Pitcher", filterable=True,
-                                  info="Type to search across all pitchers")
-            pitch = gr.Dropdown(choices=_pitch_choices(DEFAULT_USER),
-                                value=DEFAULT_PITCH, label="Pitch", filterable=True,
-                                info="Applies to Live delivery and Joint work")
+    theme = gr.themes.Soft(primary_hue="orange", secondary_hue="orange",
+                           neutral_hue="slate")
+    with gr.Blocks(title="OBP Pitching Dashboard", theme=theme, css=CSS) as demo:
+        gr.HTML(HERO)
+        with gr.Group(elem_id="pickers"):
+            with gr.Row():
+                pitcher = gr.Dropdown(choices=_pitcher_choices(), value=DEFAULT_USER,
+                                      label="Pitcher", filterable=True, scale=1,
+                                      info="Type to search across all pitchers")
+                pitch = gr.Dropdown(choices=_pitch_choices(DEFAULT_USER),
+                                    value=DEFAULT_PITCH, label="Pitch",
+                                    filterable=True, scale=1,
+                                    info="Applies to Live delivery and Joint work")
 
         with gr.Tabs():
             with gr.Tab("Live delivery"):
-                live_info = gr.Markdown()
-                anim_plot = gr.HTML(label="3D delivery + live force plates")
+                live_info = gr.Markdown(elem_classes="pitch-head")
+                anim_plot = gr.HTML(elem_classes="anim-wrap")
                 with gr.Row():
                     velo_plot = gr.Plot(label="Velocity")
                     zbio_plot = gr.Plot(label="Biomechanics z-scores")

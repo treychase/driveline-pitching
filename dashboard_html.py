@@ -89,18 +89,6 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     frames_idx = list(range(0, markers.n_frames, step))
     f0 = frames_idx[0]
 
-    # Head reference: a sphere at the centroid of the head markers each frame.
-    _label_ix = {l: i for i, l in enumerate(markers.labels)}
-    head_idx = [_label_ix[l] for l in ("LFHD", "RFHD", "LBHD", "RBHD")
-                if l in _label_ix]
-
-    def _head_center(coords):
-        if not head_idx:
-            return None
-        pts = coords[head_idx]
-        return np.nanmean(pts, axis=0) if np.isfinite(pts).any() else \
-            np.array([np.nan, np.nan, np.nan])
-
     use_bw = fp is not None and fp.get("has_bw")
     suffix = "_bw" if use_bw else ""
     unit = "BW" if use_bw else "N"
@@ -183,17 +171,6 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                              text=[rtxt], textfont=dict(color=rtc, size=12),
                              textposition="middle center", showlegend=False,
                              hoverinfo="skip"), row=1, col=3)
-    # 12: head sphere (reference) at the head-marker centroid
-    has_head = bool(head_idx)
-    if has_head:
-        hc0 = _head_center(c0)
-        fig.add_trace(go.Scatter3d(x=[hc0[0]], y=[hc0[1]], z=[hc0[2]],
-                                   mode="markers",
-                                   marker=dict(size=16, color=theme.SLATE,
-                                               opacity=0.95,
-                                               line=dict(color="#fff", width=1)),
-                                   name="head", showlegend=False,
-                                   hoverinfo="skip"), row=1, col=1)
 
     # Delivery-phase spans, used to shade the GRF plot AND to tint the live 3D
     # backdrop frame-by-frame as the delivery plays.
@@ -267,10 +244,6 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                        text=[rtxt], textfont=dict(color=rtc, size=12)),
         ]
         frame_traces = [1, 2, 5, 6, 7, 8, 9, 10, 11]
-        if has_head:
-            hc = _head_center(coords)
-            frame_data.append(go.Scatter3d(x=[hc[0]], y=[hc[1]], z=[hc[2]]))
-            frame_traces.append(12)
         anim_frames.append(go.Frame(name=str(f), layout=dict(scene=dict(
             xaxis=dict(backgroundcolor=bg), yaxis=dict(backgroundcolor=bg),
             zaxis=dict(backgroundcolor=bg))), data=frame_data, traces=frame_traces))
@@ -295,7 +268,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                       xaxis=dict(backgroundcolor=bg0),
                       yaxis=dict(backgroundcolor=bg0),
                       zaxis=dict(backgroundcolor=bg0),
-                      camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)))
+                      camera=dict(eye=dict(x=1.35, y=-1.35, z=0.75)))
     fig.update_xaxes(title_text="time (s)", row=1, col=2)
     fig.update_yaxes(title_text=f"vertical GRF ({unit})", range=[0, ymax],
                      row=1, col=2)
@@ -442,16 +415,27 @@ def build_jointwork_body_figure(positions, zwork, handed):
         if pa is not None and pb is not None:
             nx += [pa[0], pb[0], None]; ny += [pa[1], pb[1], None]
             nz += [pa[2], pb[2], None]
+    head_pt = None
     sh = [P("shoulder"), P("glove_shoulder")]
     hp = [P("lead_hip"), P("rear_hip")]
     if all(p is not None for p in sh + hp):
         smid, hmid = (sh[0] + sh[1]) / 2, (hp[0] + hp[1]) / 2
         nx += [smid[0], hmid[0], None]; ny += [smid[1], hmid[1], None]
         nz += [smid[2], hmid[2], None]
+        # Neck + head continue up the spine from the shoulders (reference only).
+        head_pt = smid + 0.4 * (smid - hmid)
+        nx += [smid[0], head_pt[0], None]; ny += [smid[1], head_pt[1], None]
+        nz += [smid[2], head_pt[2], None]
     if nx:
         fig.add_trace(go.Scatter3d(x=nx, y=ny, z=nz, mode="lines",
                                    line=dict(color=theme.PLOT_MUTED, width=6),
                                    showlegend=False, hoverinfo="skip"))
+    if head_pt is not None:
+        fig.add_trace(go.Scatter3d(
+            x=[head_pt[0]], y=[head_pt[1]], z=[head_pt[2]], mode="markers",
+            marker=dict(size=18, color=theme.PLOT_MUTED, opacity=0.95,
+                        line=dict(color="#fff", width=1)),
+            showlegend=False, hoverinfo="skip"))
 
     # Work-shaded limb segments (thick lines coloured by the driving joint's z).
     for a, b, drv in _BODY_LIMBS:
