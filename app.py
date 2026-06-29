@@ -12,6 +12,8 @@ Run locally with ``python app.py`` (serves on http://localhost:7860).
 
 from __future__ import annotations
 
+import html as _html
+
 import numpy as np
 import gradio as gr
 
@@ -24,6 +26,30 @@ from dashboard import _load_force, download_c3d_for_pitch
 from velocity_model import train_velocity_model
 
 STEP = 6  # frame step for the pose animation (larger = lighter for the Space)
+ANIM_HEIGHT = 600  # px height of the animated pose+force panel
+
+
+def _plotly_iframe(fig, height=ANIM_HEIGHT):
+    """Render a Plotly figure as a self-contained iframe.
+
+    Gradio's ``gr.Plot`` does not register Plotly animation *frames* on the
+    graph div, so the Play button and frame slider do nothing. Embedding the
+    figure as standalone HTML inside an ``<iframe srcdoc>`` runs Plotly in its
+    own document — frames register and the animation plays. Plotly.js is loaded
+    from the CDN (cached across pitches, so re-selection stays snappy).
+    """
+    doc = fig.to_html(full_html=True, include_plotlyjs="cdn",
+                      default_width="100%", default_height="100%",
+                      config={"displaylogo": False, "responsive": True})
+    return (f'<iframe srcdoc="{_html.escape(doc, quote=True)}" '
+            f'style="width:100%;height:{height}px;border:none" '
+            f'loading="lazy"></iframe>')
+
+
+# Per-pitch result caches so re-selecting a pitch is instant (the first view
+# downloads + parses the C3D and builds the figures; later views are cached).
+_LIVE_CACHE: dict[str, tuple] = {}
+_WORK_CACHE: dict[str, tuple] = {}
 
 # Train once at startup; reused across requests.
 TRAINED = train_velocity_model()
@@ -103,7 +129,9 @@ def _pitch_header(sp):
 
 
 def live_figures(sp):
-    """Build the Live-delivery figures for one pitch."""
+    """Build the Live-delivery views for one pitch (cached per pitch)."""
+    if sp in _LIVE_CACHE:
+        return _LIVE_CACHE[sp]
     try:
         predicted, std = TRAINED.predict_pitch(sp)
         actual = DS.actual_velocity(sp)
@@ -118,21 +146,29 @@ def live_figures(sp):
             vecs = {}
         lo = float(min(DS.y.min(), predicted - 3 * std) - 2)
         hi = float(max(DS.y.max(), predicted + 3 * std) + 2)
-        anim = dh.build_pose_force_figure(markers, fp, vecs, ft, lead, rear, STEP,
-                                          "anim")
+        anim_fig = dh.build_pose_force_figure(markers, fp, vecs, ft, lead, rear,
+                                              STEP, "anim")
+        # Embed as an iframe so the Play button / frame slider actually animate.
+        anim = _plotly_iframe(anim_fig, height=ANIM_HEIGHT)
         velo = dh.build_velocity_figure(predicted, std, actual, lo, hi)
         zbio = dh.build_zscore_figure(DS.zscores(sp))
-        return _pitch_header(sp), anim, velo, zbio
+        out = (_pitch_header(sp), anim, velo, zbio)
+        _LIVE_CACHE[sp] = out
+        return out
     except Exception as exc:  # keep the Space responsive on any data hiccup
-        return f"Could not build pitch {sp}: {exc}", None, None, None
+        return f"Could not build pitch {sp}: {exc}", "", None, None
 
 
 def work_figures(sp):
-    """Build the Joint-work figures for one pitch."""
+    """Build the Joint-work figures for one pitch (cached per pitch)."""
+    if sp in _WORK_CACHE:
+        return _WORK_CACHE[sp]
     try:
         jw = jk.load_joint_work(sp)
-        return (dh.build_jointwork_time_figure(jw, None),
-                dh.build_jointwork_z_figure(jk.work_zscores(sp)))
+        out = (dh.build_jointwork_time_figure(jw, None),
+               dh.build_jointwork_z_figure(jk.work_zscores(sp)))
+        _WORK_CACHE[sp] = out
+        return out
     except Exception:
         return None, None
 
@@ -172,7 +208,7 @@ def build_demo():
         with gr.Tabs():
             with gr.Tab("Live delivery"):
                 live_info = gr.Markdown()
-                anim_plot = gr.Plot(label="3D delivery + live force plates")
+                anim_plot = gr.HTML(label="3D delivery + live force plates")
                 with gr.Row():
                     velo_plot = gr.Plot(label="Velocity")
                     zbio_plot = gr.Plot(label="Biomechanics z-scores")

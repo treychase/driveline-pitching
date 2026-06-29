@@ -119,11 +119,13 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     sx, sy, sz = _seg_coords(c0, pairs)
     fig.add_trace(go.Scatter3d(x=sx, y=sy, z=sz, mode="lines",
                                line=dict(color=theme.SLATE, width=4),
-                               name="skeleton", hoverinfo="skip"), row=1, col=1)
+                               name="skeleton", showlegend=False,
+                               hoverinfo="skip"), row=1, col=1)
     fin = np.isfinite(c0).all(axis=-1)
     fig.add_trace(go.Scatter3d(x=c0[fin, 0], y=c0[fin, 1], z=c0[fin, 2],
                                mode="markers", marker=dict(size=3, color=theme.PLOT_MUTED),
-                               name="markers", hoverinfo="skip"), row=1, col=1)
+                               name="markers", showlegend=False,
+                               hoverinfo="skip"), row=1, col=1)
     # 3,4: force traces
     fig.add_trace(go.Scatter(x=frame_times, y=lead, mode="lines",
                              line=dict(color=_LEAD_C, width=2),
@@ -146,7 +148,8 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     (vx, vy, vz), (tx, ty, tz) = _vector_segments(vecs, f0)
     fig.add_trace(go.Scatter3d(x=vx, y=vy, z=vz, mode="lines",
                                line=dict(color=theme.PLOT_ACCENT, width=5),
-                               name="joint velocity", hoverinfo="skip"),
+                               name="joint velocity", showlegend=False,
+                               hoverinfo="skip"),
                   row=1, col=1)
     fig.add_trace(go.Scatter3d(x=tx, y=ty, z=tz, mode="markers",
                                marker=dict(size=3, color=theme.PLOT_ACCENT),
@@ -178,9 +181,10 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
             fig.add_shape(type="rect", x0=ph["t0"], x1=ph["t1"], y0=0, y1=ymax,
                           xref=xa, yref=ya, line=dict(width=0),
                           fillcolor=ph["color"], opacity=0.85, layer="below")
-            fig.add_annotation(x=(ph["t0"] + ph["t1"]) / 2, y=ymax * 0.99,
+            # Rotate labels vertical so the narrow late phases don't overlap.
+            fig.add_annotation(x=(ph["t0"] + ph["t1"]) / 2, y=ymax * 0.98,
                                xref=xa, yref=ya, text=ph["label"], showarrow=False,
-                               yanchor="top", textangle=0,
+                               yanchor="top", textangle=-90,
                                font=dict(size=8, color="#888"))
         for key, color in [("fp", "#888"), ("mer", "#aaa"), ("br", theme.PLOT_ACCENT)]:
             fr = fp["event_frames"].get(key)
@@ -240,20 +244,27 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.update_yaxes(title_text=f"vertical GRF ({unit})", range=[0, ymax],
                      row=1, col=2)
     fig.update_layout(
-        template=theme.plotly_template(), height=560,
-        margin=dict(l=0, r=0, t=40, b=0),
-        legend=dict(orientation="h", x=0.62, y=1.08),
+        template=theme.plotly_template(), height=620,
+        margin=dict(l=0, r=0, t=95, b=70),
+        # Only the two GRF leg traces appear in the legend (the 3D traces are
+        # self-evident); place it top-centre, between the corner button groups
+        # and above the subplot titles, so it never collides with the slider.
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=1.16,
+                    yanchor="top"),
         updatemenus=[
-            dict(type="buttons", showactive=False, x=0.0, y=0, xanchor="right",
-                 yanchor="top", buttons=[
+            # Play / Pause, top-left, clear of the titles.
+            dict(type="buttons", direction="right", showactive=False,
+                 x=0.0, y=1.16, xanchor="left", yanchor="top", bgcolor="#fff",
+                 buttons=[
                      dict(label="▶ Play", method="animate", args=[None, dict(
                          frame=dict(duration=40, redraw=True), fromcurrent=True,
                          transition=dict(duration=0))]),
                      dict(label="⏸ Pause", method="animate", args=[[None], dict(
                          frame=dict(duration=0, redraw=False), mode="immediate")]),
                  ]),
-            dict(type="buttons", direction="right", showactive=True, x=0.0, y=1.08,
-                 xanchor="left", yanchor="top", bgcolor="#fff",
+            # Joint-vector toggle, top-right, clear of the titles.
+            dict(type="buttons", direction="right", showactive=True,
+                 x=1.0, y=1.16, xanchor="right", yanchor="top", bgcolor="#fff",
                  buttons=[
                      dict(label="Vectors on", method="restyle",
                           args=[{"visible": True}, [8, 9]]),
@@ -261,7 +272,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                           args=[{"visible": False}, [8, 9]]),
                  ]),
         ],
-        sliders=[dict(active=0, y=0, x=0.05, len=0.55,
+        sliders=[dict(active=0, y=0, yanchor="top", x=0.05, len=0.55,
                       currentvalue=dict(prefix="frame "),
                       steps=[dict(method="animate", label=str(f),
                                   args=[[str(f)], dict(mode="immediate",
