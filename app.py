@@ -29,18 +29,56 @@ STEP = 6  # frames skipped per animation step (larger = fewer frames = faster)
 ANIM_HEIGHT = 600  # px height of the animated pose+force panel
 
 
-def _plotly_iframe(fig, height=ANIM_HEIGHT):
-    """Render a Plotly figure as a self-contained iframe.
+# Injected into the animation iframe: a Loop toggle that replays the delivery
+# continuously (Plotly's updatemenu can't loop on its own). It restarts the
+# animation whenever one pass finishes while Loop is on.
+_LOOP_JS = """
+<script>
+(function() {
+  function init() {
+    var gd = document.querySelector('.js-plotly-plot');
+    if (!gd || !window.Plotly) { return setTimeout(init, 200); }
+    var loop = false;
+    var opts = {frame: {duration: %(ms)d, redraw: true},
+                transition: {duration: 0}, mode: 'immediate'};
+    var btn = document.createElement('button');
+    btn.textContent = '\\u21BB Loop';
+    btn.style.cssText = 'position:absolute;top:8px;left:200px;z-index:20;' +
+      'padding:5px 12px;font:13px -apple-system,sans-serif;border:1px solid #ccc;' +
+      'border-radius:6px;background:#fff;cursor:pointer;';
+    var host = gd.parentNode; host.style.position = 'relative';
+    host.appendChild(btn);
+    btn.onclick = function() {
+      loop = !loop;
+      btn.style.background = loop ? '#ffd9b3' : '#fff';
+      btn.style.fontWeight = loop ? '600' : '400';
+      if (loop) { Plotly.animate(gd, null, Object.assign({fromcurrent: false}, opts)); }
+      else { Plotly.animate(gd, [null], {mode: 'immediate'}); }
+    };
+    gd.on('plotly_animated', function() {
+      if (loop) { Plotly.animate(gd, null, Object.assign({fromcurrent: false}, opts)); }
+    });
+  }
+  init();
+})();
+</script>
+"""
+
+
+def _plotly_iframe(fig, height=ANIM_HEIGHT, loop_ms=20):
+    """Render a Plotly figure as a self-contained iframe (with a Loop toggle).
 
     Gradio's ``gr.Plot`` does not register Plotly animation *frames* on the
     graph div, so the Play button and frame slider do nothing. Embedding the
     figure as standalone HTML inside an ``<iframe srcdoc>`` runs Plotly in its
     own document — frames register and the animation plays. Plotly.js is loaded
-    from the CDN (cached across pitches, so re-selection stays snappy).
+    from the CDN (cached across pitches, so re-selection stays snappy). A small
+    injected script adds a Loop button.
     """
     doc = fig.to_html(full_html=True, include_plotlyjs="cdn",
                       default_width="100%", default_height="100%",
                       config={"displaylogo": False, "responsive": True})
+    doc = doc.replace("</body>", _LOOP_JS % {"ms": loop_ms} + "</body>")
     return (f'<iframe srcdoc="{_html.escape(doc, quote=True)}" '
             f'style="width:100%;height:{height}px;border:none" '
             f'loading="lazy"></iframe>')
@@ -148,8 +186,9 @@ def live_figures(sp):
         hi = float(max(DS.y.max(), predicted + 3 * std) + 2)
         anim_fig = dh.build_pose_force_figure(markers, fp, vecs, ft, lead, rear,
                                               STEP, "anim")
-        # Embed as an iframe so the Play button / frame slider actually animate.
-        anim = _plotly_iframe(anim_fig, height=ANIM_HEIGHT)
+        # Embed as an iframe so the Play button / frame slider / Loop animate.
+        loop_ms = max(1, int(round(1000 * STEP / markers.rate)))
+        anim = _plotly_iframe(anim_fig, height=ANIM_HEIGHT, loop_ms=loop_ms)
         velo = dh.build_velocity_figure(predicted, std, actual, lo, hi)
         zbio = dh.build_zscore_figure(DS.zscores(sp))
         out = (_pitch_header(sp), anim, velo, zbio)
@@ -173,7 +212,12 @@ def work_figures(sp):
             t = jw.time[-1] if br is None else br
             pos = jk.joint_positions_at(sp, t)
             handed = str(DS.poi.iloc[DS.index_of(sp)].get("p_throws", "R"))
-            body = dh.build_jointwork_body_figure(pos, zwork, handed)
+            # Use the real C3D pose at ball release as the body.
+            markers = c3d_plot.load_c3d(download_c3d_for_pitch(DS, sp))
+            ft = np.arange(markers.n_frames) / markers.rate
+            br_frame = int(np.argmin(np.abs(ft - t)))
+            body = dh.build_jointwork_body_figure(pos, zwork, handed,
+                                                  markers=markers, frame=br_frame)
         except Exception:
             body = None
         out = (body, dh.build_jointwork_time_figure(jw, None),
