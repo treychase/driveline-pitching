@@ -30,11 +30,16 @@ jobs:
           fi
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          # Push a single flattened commit of the current tree. The repo's git
-          # history contains an old >10 MB asset that HF rejects (its 10 MiB
-          # non-LFS limit), and the Space doesn't need GitHub history anyway, so
-          # we mirror only the current files as one orphan commit.
+          git lfs install --local
+          # Mirror the current tree as a single flattened (orphan) commit:
+          #  - flattened, because the repo history holds an old >10 MB asset
+          #    that HF's 10 MiB non-LFS limit rejects (the Space needs no
+          #    history);
+          #  - binaries tracked via Git LFS, because this Space uses Xet/LFS
+          #    storage and rejects raw binary files (even small ones).
           git checkout --orphan hf-deploy
+          git lfs track "*.gif" "*.png" "*.jpg" "*.jpeg" "*.mp4" "*.c3d" >/dev/null
+          git add .gitattributes
           git add -A
           git commit -q -m "Deploy ${GITHUB_SHA} to Hugging Face Space"
           git push --force \
