@@ -1,0 +1,35 @@
+name: Deploy to Hugging Face Space
+
+# Mirrors `main` to the HuggingFace Space on every push, so the live app at
+# https://huggingface.co/spaces/treychase/driveline-pitching always matches the
+# repo. Requires a repository secret named `HF_TOKEN` (a HuggingFace token with
+# *write* access): Settings -> Secrets and variables -> Actions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the push isn't a shallow clone
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN secret is not set. Add a write token at" \
+                 "Settings -> Secrets and variables -> Actions (name it HF_TOKEN)."
+            exit 1
+          fi
+          # Force-push because the Space starts with its own placeholder commit;
+          # this makes the Space a mirror of main.
+          git push --force \
+            "https://treychase:${HF_TOKEN}@huggingface.co/spaces/treychase/driveline-pitching" \
+            HEAD:main
