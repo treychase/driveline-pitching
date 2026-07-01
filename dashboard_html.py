@@ -8,6 +8,11 @@ Tabs:
   delivery. Below: the Bayesian-Lasso velocity gauge, the biomechanics z-scores,
   the **joint work accumulated during the delivery**, and the **z-scores of joint
   work** for the selected pitch.
+* **Joint work** — a **3D body coloured by joint work** (red generates, blue
+  absorbs), with no plain stick figure overlaid, plus the work-vs-time curves and
+  z-scores.
+* **Efficiency** — a **mechanical efficiency score** (torso + lower-body drive
+  vs. throwing-elbow load) with a gauge and a signed contribution breakdown.
 * **Glossary** — searchable full explanations of every biomechanics variable.
 
 Styled with a white & orange theme (``theme.py``).
@@ -33,6 +38,7 @@ from velocity_model import train_velocity_model
 _LEAD_C, _REAR_C = theme.PLOT_A, theme.PLOT_B
 _DIRT_SCALE = [[0.0, "#5b3a1e"], [0.5, "#8a5a30"], [1.0, "#b9854f"]]
 _VEC_SCALE = 0.03   # metres drawn per (m/s) of joint velocity
+_VEC_HEAD = 0.06    # arrowhead cone size (m, absolute)
 _FOOT_STOPS = theme.FOOT_STOPS
 _FOOT_MAX = theme.FOOT_MAX   # red flash when a foot is at its peak force
 
@@ -64,18 +70,28 @@ def _seg_coords(coords, pairs):
     return xs, ys, zs
 
 
-def _vector_segments(vecs, fi, scale=_VEC_SCALE):
-    """Arrow shafts (NaN-separated) and tip points for joint velocity vectors."""
-    xs, ys, zs, tx, ty, tz = [], [], [], [], [], []
+def _vector_arrows(vecs, fi, scale=_VEC_SCALE):
+    """Shaft segments (NaN-separated) and arrowhead cones for joint vectors.
+
+    Returns ``((xs, ys, zs), (cx, cy, cz, cu, cv, cw))`` — the shaft polyline
+    and the arrowhead cone positions (at each shaft tip) with unit direction
+    components, so the vectors read as arrows pointing along the motion.
+    """
+    xs, ys, zs = [], [], []
+    cx, cy, cz, cu, cv, cw = [], [], [], [], [], []
     for d in vecs.values():
-        p, v = d["pos"][fi], d["vel"][fi] * scale
-        if np.isfinite(p).all() and np.isfinite(v).all():
+        p, raw = d["pos"][fi], d["vel"][fi]
+        v = raw * scale
+        n = float(np.linalg.norm(raw))
+        if np.isfinite(p).all() and np.isfinite(v).all() and n > 1e-6:
             q = p + v
             xs += [p[0], q[0], None]
             ys += [p[1], q[1], None]
             zs += [p[2], q[2], None]
-            tx.append(q[0]); ty.append(q[1]); tz.append(q[2])
-    return (xs, ys, zs), (tx, ty, tz)
+            u = raw / n  # unit direction for a uniform arrowhead
+            cx.append(q[0]); cy.append(q[1]); cz.append(q[2])
+            cu.append(u[0]); cv.append(u[1]); cw.append(u[2])
+    return (xs, ys, zs), (cx, cy, cz, cu, cv, cw)
 
 
 def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
@@ -108,8 +124,10 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         horizontal_spacing=0.04,
     )
 
-    # 0: mound
-    mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers)
+    # 0: mound (coarser tessellation than the static plots — it is re-rasterised
+    # every animation frame, so fewer faces = faster, smoother playback).
+    mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers, sectors=32,
+                                                               rings=10)
     fig.add_trace(go.Mesh3d(x=mx, y=my, z=mz, i=mi, j=mj, k=mk, intensity=inten,
                             colorscale=_DIRT_SCALE, showscale=False, opacity=1.0,
                             lighting=dict(ambient=0.6, diffuse=0.8, roughness=0.9),
@@ -119,11 +137,13 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     sx, sy, sz = _seg_coords(c0, pairs)
     fig.add_trace(go.Scatter3d(x=sx, y=sy, z=sz, mode="lines",
                                line=dict(color=theme.SLATE, width=4),
-                               name="skeleton", hoverinfo="skip"), row=1, col=1)
+                               name="skeleton", showlegend=False,
+                               hoverinfo="skip"), row=1, col=1)
     fin = np.isfinite(c0).all(axis=-1)
     fig.add_trace(go.Scatter3d(x=c0[fin, 0], y=c0[fin, 1], z=c0[fin, 2],
                                mode="markers", marker=dict(size=3, color=theme.PLOT_MUTED),
-                               name="markers", hoverinfo="skip"), row=1, col=1)
+                               name="markers", showlegend=False,
+                               hoverinfo="skip"), row=1, col=1)
     # 3,4: force traces
     fig.add_trace(go.Scatter(x=frame_times, y=lead, mode="lines",
                              line=dict(color=_LEAD_C, width=2),
@@ -142,15 +162,17 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.add_trace(go.Scatter(x=[t0], y=[rear[f0]], mode="markers",
                              marker=dict(color=_REAR_C, size=11),
                              showlegend=False), row=1, col=2)
-    # 8,9: joint velocity vectors (shafts + tips) — visible by default
-    (vx, vy, vz), (tx, ty, tz) = _vector_segments(vecs, f0)
+    # 8,9: joint velocity vectors as arrows (shafts + arrowhead cones)
+    (vx, vy, vz), (cx, cy, cz, cu, cv, cw) = _vector_arrows(vecs, f0)
     fig.add_trace(go.Scatter3d(x=vx, y=vy, z=vz, mode="lines",
                                line=dict(color=theme.PLOT_ACCENT, width=5),
-                               name="joint velocity", hoverinfo="skip"),
+                               name="joint velocity", showlegend=False,
+                               hoverinfo="skip"),
                   row=1, col=1)
-    fig.add_trace(go.Scatter3d(x=tx, y=ty, z=tz, mode="markers",
-                               marker=dict(size=3, color=theme.PLOT_ACCENT),
-                               showlegend=False, hoverinfo="skip"), row=1, col=1)
+    fig.add_trace(go.Cone(x=cx, y=cy, z=cz, u=cu, v=cv, w=cw, anchor="tip",
+                          sizemode="absolute", sizeref=_VEC_HEAD, showscale=False,
+                          colorscale=[[0, theme.PLOT_ACCENT], [1, theme.PLOT_ACCENT]],
+                          showlegend=False, hoverinfo="skip"), row=1, col=1)
     # 10,11: foot-vGRF squares (lead on top, rear below) in the third subplot
     lc, ltc, ltxt = _foot_state(lead[f0], float(np.nanmax(lead)), unit)
     rc, rtc, rtxt = _foot_state(rear[f0], float(np.nanmax(rear)), unit)
@@ -167,20 +189,38 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                              textposition="middle center", showlegend=False,
                              hoverinfo="skip"), row=1, col=3)
 
+    # Delivery-phase spans, used to shade the GRF plot AND to tint the live 3D
+    # backdrop frame-by-frame as the delivery plays.
+    import force_plate as _fp
+    _BG_NEUTRAL = "#dfe3e8"
+    # Bold wall tints so the phase colour clearly reads on the 3D box.
+    _BG_STRONG = {"Wind-up": "#9bb9e6", "Stride": "#8ed49f",
+                  "Arm cocking": "#f1d24f", "Acceleration": "#ff9e54",
+                  "Deceleration": "#ec8585"}
+    phase_spans = []
+    if fp is not None:
+        ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
+                    if fr < len(frame_times)}
+        phase_spans = _fp.delivery_phases(ev_times, float(frame_times[-1]))
+
+    def _phase_bg(t):
+        for ph in phase_spans:
+            if ph["t0"] <= t <= ph["t1"]:
+                return _BG_STRONG.get(ph["label"], ph["color"])
+        return _BG_NEUTRAL
+
     # event lines + shaded delivery phases on the force subplot
     xa = fig.data[3].xaxis or "x"
     ya = fig.data[3].yaxis or "y"
     if fp is not None:
-        import force_plate as _fp
-        ev_times = {k: float(frame_times[fr]) for k, fr in fp["event_frames"].items()
-                    if fr < len(frame_times)}
-        for ph in _fp.delivery_phases(ev_times, float(frame_times[-1])):
+        for ph in phase_spans:
             fig.add_shape(type="rect", x0=ph["t0"], x1=ph["t1"], y0=0, y1=ymax,
                           xref=xa, yref=ya, line=dict(width=0),
                           fillcolor=ph["color"], opacity=0.85, layer="below")
-            fig.add_annotation(x=(ph["t0"] + ph["t1"]) / 2, y=ymax * 0.99,
+            # Rotate labels vertical so the narrow late phases don't overlap.
+            fig.add_annotation(x=(ph["t0"] + ph["t1"]) / 2, y=ymax * 0.98,
                                xref=xa, yref=ya, text=ph["label"], showarrow=False,
-                               yanchor="top", textangle=0,
+                               yanchor="top", textangle=-90,
                                font=dict(size=8, color="#888"))
         for key, color in [("fp", "#888"), ("mer", "#aaa"), ("br", theme.PLOT_ACCENT)]:
             fr = fp["event_frames"].get(key)
@@ -190,6 +230,18 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                               xref=xa, yref=ya,
                               line=dict(color=color, dash="dash", width=1))
 
+    # A bold phase-colour bar across the top of the 3D panel. It is drawn on the
+    # SVG layer (above the WebGL scene) so, unlike the wall tint, it is clearly
+    # visible, and it updates every frame so the live phase reads at a glance.
+    base_shapes = [s.to_plotly_json() for s in fig.layout.shapes]
+
+    def _phase_bar(color):
+        return dict(type="rect", xref="paper", yref="paper",
+                    x0=0.0, x1=0.50, y0=0.90, y1=0.95, layer="above",
+                    fillcolor=color, line=dict(color="#bbb", width=1))
+
+    fig.add_shape(**_phase_bar(_phase_bg(float(frame_times[f0]))))
+
     # frames
     lead_peak, rear_peak = float(np.nanmax(lead)), float(np.nanmax(rear))
     anim_frames = []
@@ -197,18 +249,19 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
         coords = markers.points[f]
         sx, sy, sz = _seg_coords(coords, pairs)
         fin = np.isfinite(coords).all(axis=-1)
-        (vx, vy, vz), (tx, ty, tz) = _vector_segments(vecs, f)
+        (vx, vy, vz), (cx, cy, cz, cu, cv, cw) = _vector_arrows(vecs, f)
         tt = float(frame_times[f])
         lc, ltc, ltxt = _foot_state(lead[f], lead_peak, unit)
         rc, rtc, rtxt = _foot_state(rear[f], rear_peak, unit)
-        anim_frames.append(go.Frame(name=str(f), data=[
+        bg = _phase_bg(tt)
+        frame_data = [
             go.Scatter3d(x=sx, y=sy, z=sz),
             go.Scatter3d(x=coords[fin, 0], y=coords[fin, 1], z=coords[fin, 2]),
             go.Scatter(x=[tt, tt], y=[0, ymax]),
             go.Scatter(x=[tt], y=[float(lead[f])]),
             go.Scatter(x=[tt], y=[float(rear[f])]),
             go.Scatter3d(x=vx, y=vy, z=vz),
-            go.Scatter3d(x=tx, y=ty, z=tz),
+            go.Cone(x=cx, y=cy, z=cz, u=cu, v=cv, w=cw),
             go.Scatter(x=[0.5], y=[0.70],
                        marker=dict(symbol="square", size=64, color=lc,
                                    line=dict(color="#888", width=1)),
@@ -217,7 +270,14 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                        marker=dict(symbol="square", size=64, color=rc,
                                    line=dict(color="#888", width=1)),
                        text=[rtxt], textfont=dict(color=rtc, size=12)),
-        ], traces=[1, 2, 5, 6, 7, 8, 9, 10, 11]))
+        ]
+        frame_traces = [1, 2, 5, 6, 7, 8, 9, 10, 11]
+        anim_frames.append(go.Frame(name=str(f), layout=dict(
+            scene=dict(xaxis=dict(backgroundcolor=bg),
+                       yaxis=dict(backgroundcolor=bg),
+                       zaxis=dict(backgroundcolor=bg)),
+            shapes=base_shapes + [_phase_bar(bg)]),
+            data=frame_data, traces=frame_traces))
     fig.frames = anim_frames
 
     # Hide the foot-square subplot axes and label the two squares.
@@ -230,30 +290,48 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
     fig.add_annotation(x=0.5, y=0.50, xref=xb, yref=yb, showarrow=False,
                        text=f"<b>{rear_leg}</b> rear", font=dict(size=10, color=_REAR_C))
 
+    bg0 = _phase_bg(float(frame_times[f0]))
     fig.update_scenes(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
                       zaxis_title="Z up (m)",
-                      xaxis=dict(backgroundcolor="#fafafa"),
-                      yaxis=dict(backgroundcolor="#fafafa"),
-                      zaxis=dict(backgroundcolor="#f2f2f2"),
-                      camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)))
+                      # uirevision keeps the user's camera while the backdrop
+                      # colour animates with the delivery phase.
+                      uirevision="pose",
+                      xaxis=dict(backgroundcolor=bg0),
+                      yaxis=dict(backgroundcolor=bg0),
+                      zaxis=dict(backgroundcolor=bg0),
+                      camera=dict(eye=dict(x=1.35, y=-1.35, z=0.75)))
     fig.update_xaxes(title_text="time (s)", row=1, col=2)
     fig.update_yaxes(title_text=f"vertical GRF ({unit})", range=[0, ymax],
                      row=1, col=2)
+    # One animation frame spans ``step`` captured frames, so this many ms per
+    # frame plays the delivery back at real time; "Fast" plays at ~2x.
+    rt_ms = max(1, int(round(1000 * step / markers.rate)))
     fig.update_layout(
-        template=theme.plotly_template(), height=560,
-        margin=dict(l=0, r=0, t=40, b=0),
-        legend=dict(orientation="h", x=0.62, y=1.08),
+        template=theme.plotly_template(), height=620,
+        margin=dict(l=0, r=0, t=95, b=70),
+        # Only the two GRF leg traces appear in the legend (the 3D traces are
+        # self-evident); place it top-centre, between the corner button groups
+        # and above the subplot titles, so it never collides with the slider.
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=1.16,
+                    yanchor="top"),
         updatemenus=[
-            dict(type="buttons", showactive=False, x=0.0, y=0, xanchor="right",
-                 yanchor="top", buttons=[
-                     dict(label="▶ Play", method="animate", args=[None, dict(
-                         frame=dict(duration=40, redraw=True), fromcurrent=True,
-                         transition=dict(duration=0))]),
+            # Play / Pause, top-left, clear of the titles.
+            dict(type="buttons", direction="right", showactive=False,
+                 x=0.0, y=1.16, xanchor="left", yanchor="top", bgcolor="#fff",
+                 buttons=[
+                     dict(label=lbl, method="animate", args=[None, dict(
+                         frame=dict(duration=dur, redraw=True), fromcurrent=True,
+                         transition=dict(duration=0))])
+                     for lbl, dur in (("▶ Play", rt_ms),
+                                      ("▶▶ Fast", max(1, rt_ms // 2)))
+                 ] + [
                      dict(label="⏸ Pause", method="animate", args=[[None], dict(
                          frame=dict(duration=0, redraw=False), mode="immediate")]),
-                 ]),
-            dict(type="buttons", direction="right", showactive=True, x=0.0, y=1.08,
-                 xanchor="left", yanchor="top", bgcolor="#fff",
+                 ],
+                 ),
+            # Joint-vector toggle, top-right, clear of the titles.
+            dict(type="buttons", direction="right", showactive=True,
+                 x=1.0, y=1.16, xanchor="right", yanchor="top", bgcolor="#fff",
                  buttons=[
                      dict(label="Vectors on", method="restyle",
                           args=[{"visible": True}, [8, 9]]),
@@ -261,7 +339,7 @@ def build_pose_force_figure(markers, fp, vecs, frame_times, lead_leg, rear_leg,
                           args=[{"visible": False}, [8, 9]]),
                  ]),
         ],
-        sliders=[dict(active=0, y=0, x=0.05, len=0.55,
+        sliders=[dict(active=0, y=0, yanchor="top", x=0.05, len=0.55,
                       currentvalue=dict(prefix="frame "),
                       steps=[dict(method="animate", label=str(f),
                                   args=[[str(f)], dict(mode="immediate",
@@ -323,194 +401,126 @@ def build_jointwork_z_figure(zwork):
                  hover_extra=[f"work = {w:.0f} J" for w in sub["work_J"]])
 
 
-# --------------------------------------------------------------------------- #
-# Work-coloured 3D pose (Joint work tab): body coloured by energy generated,
-# with no plain stick-figure overlay.
-# --------------------------------------------------------------------------- #
-
-# Kinetic-chain bones: (jointA, jointB, colour_joint). jointA/jointB are
-# landmark keys from joint_kinetics.VECTOR_JOINTS; colour_joint is the energy
-# joint whose cumulative work colours the bone.
-_WORK_BONES = [
-    ("rear_ankle", "rear_knee", "rear_knee"),
-    ("rear_knee", "rear_hip", "rear_hip"),
-    ("rear_hip", "lead_hip", "rear_hip"),          # pelvis
-    ("lead_hip", "lead_knee", "lead_knee"),
-    ("lead_knee", "lead_ankle", "lead_knee"),
-    ("rear_hip", "shoulder", "shoulder"),          # trunk
-    ("lead_hip", "shoulder", "shoulder"),
-    ("shoulder", "elbow", "shoulder"),
-    ("elbow", "wrist", "elbow"),
-    ("wrist", "hand", "elbow"),
-    ("shoulder", "glove_shoulder", "glove_shoulder"),
+# Limb segments shaded by the work generated at their driving joint, plus the
+# neutral structural segments that give the body its shape. Joint names match
+# joint_kinetics: ``shoulder``/``elbow`` are the throwing arm, ``glove_*`` the
+# glove arm, and ``lead``/``rear`` the legs — all in real lab-frame positions,
+# so the body is correctly sided for right- and left-handed pitchers.
+_BODY_LIMBS = [
+    ("shoulder", "elbow", "shoulder"),                 # throwing upper arm
+    ("elbow", "wrist", "elbow"),                        # throwing forearm
     ("glove_shoulder", "glove_elbow", "glove_shoulder"),
     ("glove_elbow", "glove_wrist", "glove_elbow"),
-    ("glove_wrist", "glove_hand", "glove_elbow"),
+    ("lead_hip", "lead_knee", "lead_hip"),
+    ("lead_knee", "lead_ankle", "lead_knee"),
+    ("rear_hip", "rear_knee", "rear_hip"),
+    ("rear_knee", "rear_ankle", "rear_knee"),
 ]
-# Energy joints drawn as large work-coloured markers.
-_WORK_MARKER_JOINTS = ["rear_hip", "rear_knee", "lead_hip", "lead_knee",
-                       "shoulder", "elbow", "glove_shoulder", "glove_elbow"]
-# Structural joints (no work signal) drawn small/neutral to complete the body.
-_STRUCT_JOINTS = ["rear_ankle", "lead_ankle", "wrist", "hand",
-                  "glove_wrist", "glove_hand"]
+_BODY_NEUTRAL = [("shoulder", "glove_shoulder"), ("lead_hip", "rear_hip"),
+                 ("wrist", "hand"), ("glove_wrist", "glove_hand")]
 
 
-def _hex2rgb(h):
-    h = h.lstrip("#")
-    return tuple(int(h[k:k + 2], 16) for k in (0, 2, 4))
+def build_jointwork_body_figure(positions, zwork, handed):
+    """A 3D body with each limb shaded by its joint's work z-score.
 
+    ``positions`` maps joint -> ``(3,)`` lab-frame coordinates (e.g. the pose at
+    ball release); ``zwork`` is the ``work_zscores`` DataFrame; ``handed`` is the
+    pitcher's throwing hand (``'R'``/``'L'``). Warm limbs generated more energy
+    than the dataset average at that joint, cool limbs less.
 
-def _diverging_rgb(val, vmax):
-    """Map a work value to an rgb() string on the blue-white-red scale."""
-    if not np.isfinite(val) or vmax <= 0:
-        return "rgb(200,200,200)"
-    t = 0.5 + 0.5 * float(np.clip(val / vmax, -1.0, 1.0))
-    for (f0, c0), (f1, c1) in zip(theme.DIVERGING, theme.DIVERGING[1:]):
-        if t <= f1 or f1 == theme.DIVERGING[-1][0]:
-            a = (t - f0) / (f1 - f0) if f1 > f0 else 0.0
-            r0, r1 = _hex2rgb(c0), _hex2rgb(c1)
-            rgb = tuple(int(round(r0[k] + a * (r1[k] - r0[k]))) for k in range(3))
-            return f"rgb{rgb}"
-    return "rgb(200,200,200)"
-
-
-def _work_marker_data(vecs, joints, work_f, fi):
-    xs, ys, zs, cs, names = [], [], [], [], []
-    for j in joints:
-        p = vecs[j]["pos"][fi]
-        if not np.isfinite(p).all():
-            continue
-        xs.append(p[0]); ys.append(p[1]); zs.append(p[2])
-        cs.append(float(work_f[j][fi]))
-        names.append(j.replace("_", " "))
-    return xs, ys, zs, cs, names
-
-
-def _struct_marker_data(vecs, joints, fi):
-    xs, ys, zs = [], [], []
-    for j in joints:
-        p = vecs[j]["pos"][fi]
-        if np.isfinite(p).all():
-            xs.append(p[0]); ys.append(p[1]); zs.append(p[2])
-    return xs, ys, zs
-
-
-def build_jointwork_pose_figure(markers, jw, vecs, frame_times, step, mound=True):
-    """Animated 3D pose coloured by joint work (energy generated), no skeleton.
-
-    The kinetic chain is drawn as work-coloured bones and joint markers — red =
-    generating energy, blue = absorbing — with a colour bar in Joules. The plain
-    grey stick figure is intentionally omitted so colour carries the work.
-
-    Returns ``None`` if joint-centre positions (``vecs``) or joint work are
-    unavailable for this pitch.
+    The body is drawn from the joint centres so the **work colour carries the
+    figure** — the limb segments and joint spheres are shaded by energy
+    generated, with only thin neutral links (shoulders, hips, hands) and a head
+    for shape. The plain grey C3D stick figure is intentionally **not** overlaid.
     """
     import plotly.graph_objects as go
-    import mound as mound_mod
 
-    if not vecs or not jw.work:
-        return None
+    zmap = dict(zip(zwork["joint"].astype(str), zwork["z"].astype(float)))
+    wmap = dict(zip(zwork["joint"].astype(str), zwork["work_J"].astype(float)))
 
-    # Cumulative work per energy joint, interpolated onto the animation frames.
-    work_f = {j: np.interp(frame_times, jw.time, w) for j, w in jw.work.items()}
-    vmax = max((float(np.nanmax(np.abs(w))) for w in work_f.values()), default=1.0)
-    vmax = vmax or 1.0
-
-    bones = [(a, b, cj) for (a, b, cj) in _WORK_BONES
-             if a in vecs and b in vecs and cj in work_f]
-    marker_joints = [j for j in _WORK_MARKER_JOINTS if j in vecs and j in work_f]
-    struct_joints = [j for j in _STRUCT_JOINTS if j in vecs]
-    if not bones and not marker_joints:
-        return None
-
-    frames_idx = list(range(0, markers.n_frames, step))
-    f0 = frames_idx[0]
+    def P(j):
+        p = positions.get(j)
+        return p if p is not None and np.isfinite(p).all() else None
 
     fig = go.Figure()
-    # 0: mound (static context)
-    if mound:
-        mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers)
-        fig.add_trace(go.Mesh3d(x=mx, y=my, z=mz, i=mi, j=mj, k=mk, intensity=inten,
-                                colorscale=_DIRT_SCALE, showscale=False, opacity=1.0,
-                                lighting=dict(ambient=0.6, diffuse=0.8, roughness=0.9),
-                                hoverinfo="skip"))
 
-    # Bones (one trace each so they can be coloured individually per frame).
-    bone_start = len(fig.data)
-    for a, b, cj in bones:
-        pa, pb = vecs[a]["pos"][f0], vecs[b]["pos"][f0]
+    # Joint-centre body with only thin neutral links + a head for shape (no
+    # grey C3D stick figure): the work-shaded limbs and joints carry the colour.
+    nx, ny, nz = [], [], []
+    for a, b in _BODY_NEUTRAL:
+        pa, pb = P(a), P(b)
+        if pa is not None and pb is not None:
+            nx += [pa[0], pb[0], None]; ny += [pa[1], pb[1], None]
+            nz += [pa[2], pb[2], None]
+    head_pt = None
+    sh = [P("shoulder"), P("glove_shoulder")]
+    hp = [P("lead_hip"), P("rear_hip")]
+    if all(p is not None for p in sh + hp):
+        smid, hmid = (sh[0] + sh[1]) / 2, (hp[0] + hp[1]) / 2
+        nx += [smid[0], hmid[0], None]; ny += [smid[1], hmid[1], None]
+        nz += [smid[2], hmid[2], None]
+        head_pt = smid + 0.4 * (smid - hmid)
+        nx += [smid[0], head_pt[0], None]; ny += [smid[1], head_pt[1], None]
+        nz += [smid[2], head_pt[2], None]
+    if nx:
+        fig.add_trace(go.Scatter3d(x=nx, y=ny, z=nz, mode="lines",
+                                   line=dict(color=theme.PLOT_MUTED, width=6),
+                                   showlegend=False, hoverinfo="skip"))
+    if head_pt is not None:
         fig.add_trace(go.Scatter3d(
-            x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
-            line=dict(color=_diverging_rgb(work_f[cj][f0], vmax), width=9),
-            hoverinfo="skip", showlegend=False))
+            x=[head_pt[0]], y=[head_pt[1]], z=[head_pt[2]], mode="markers",
+            marker=dict(size=18, color=theme.PLOT_MUTED, opacity=0.95,
+                        line=dict(color="#fff", width=1)),
+            showlegend=False, hoverinfo="skip"))
 
-    # Energy-joint markers, coloured by work (carries the colour bar).
-    ex, ey, ez, ec, enames = _work_marker_data(vecs, marker_joints, work_f, f0)
-    emarker_idx = len(fig.data)
-    fig.add_trace(go.Scatter3d(
-        x=ex, y=ey, z=ez, mode="markers",
-        marker=dict(size=9, color=ec, colorscale=theme.DIVERGING,
-                    cmin=-vmax, cmax=vmax, line=dict(color="#444", width=1),
-                    colorbar=dict(title="energy<br>generated (J)", thickness=12,
-                                  len=0.6)),
-        customdata=np.array(ec).reshape(-1, 1), text=enames,
-        hovertemplate="%{text}<br>work = %{customdata[0]:.0f} J<extra></extra>",
-        name="joint work"))
+    # Work-shaded limb segments (thick lines coloured by the driving joint's z).
+    for a, b, drv in _BODY_LIMBS:
+        pa, pb = P(a), P(b)
+        if pa is None or pb is None:
+            continue
+        z = zmap.get(drv)
+        if z is None:
+            fig.add_trace(go.Scatter3d(
+                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
+                line=dict(color=theme.PLOT_MUTED, width=12), showlegend=False,
+                hoverinfo="skip"))
+        else:
+            w = wmap.get(drv, float("nan"))
+            fig.add_trace(go.Scatter3d(
+                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
+                line=dict(color=[z, z], coloraxis="coloraxis", width=12),
+                hovertemplate=f"{drv}: {w:.0f} J (z={z:+.2f})<extra></extra>",
+                showlegend=False))
 
-    # Structural joints (ankles, wrists, hands) — neutral, complete the shape.
-    sx, sy, sz = _struct_marker_data(vecs, struct_joints, f0)
-    smarker_idx = len(fig.data)
-    fig.add_trace(go.Scatter3d(
-        x=sx, y=sy, z=sz, mode="markers",
-        marker=dict(size=4, color=theme.PLOT_MUTED), hoverinfo="skip",
-        showlegend=False))
+    # Joint spheres coloured by work, carrying the shared colour axis.
+    jx, jy, jz, jc, jt = [], [], [], [], []
+    for j, z in zmap.items():
+        p = P(j)
+        if p is None:
+            continue
+        jx.append(p[0]); jy.append(p[1]); jz.append(p[2]); jc.append(z)
+        jt.append(f"{j}: {wmap.get(j, float('nan')):.0f} J (z={z:+.2f})")
+    if jx:
+        fig.add_trace(go.Scatter3d(
+            x=jx, y=jy, z=jz, mode="markers",
+            marker=dict(size=8, color=jc, coloraxis="coloraxis",
+                        line=dict(color="#fff", width=1)),
+            text=jt, hovertemplate="%{text}<extra></extra>", showlegend=False))
 
-    # Frames
-    anim_frames = []
-    animated = list(range(bone_start, bone_start + len(bones))) + \
-        [emarker_idx, smarker_idx]
-    for f in frames_idx:
-        data = []
-        for a, b, cj in bones:
-            pa, pb = vecs[a]["pos"][f], vecs[b]["pos"][f]
-            data.append(go.Scatter3d(
-                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]],
-                line=dict(color=_diverging_rgb(work_f[cj][f], vmax), width=9)))
-        ex, ey, ez, ec, _n = _work_marker_data(vecs, marker_joints, work_f, f)
-        data.append(go.Scatter3d(x=ex, y=ey, z=ez,
-                                 marker=dict(color=ec, cmin=-vmax, cmax=vmax),
-                                 customdata=np.array(ec).reshape(-1, 1)))
-        sx, sy, sz = _struct_marker_data(vecs, struct_joints, f)
-        data.append(go.Scatter3d(x=sx, y=sy, z=sz))
-        anim_frames.append(go.Frame(name=str(f), data=data, traces=animated))
-    fig.frames = anim_frames
-
-    fig.update_scenes(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
-                      zaxis_title="Z up (m)",
-                      xaxis=dict(backgroundcolor="#fafafa"),
-                      yaxis=dict(backgroundcolor="#fafafa"),
-                      zaxis=dict(backgroundcolor="#f2f2f2"),
-                      camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)))
+    arm = "right" if str(handed).upper().startswith("R") else "left"
     fig.update_layout(
         template=theme.plotly_template(), height=560,
-        margin=dict(l=0, r=0, t=40, b=0),
-        title="Delivery coloured by joint work — red generates, blue absorbs",
-        updatemenus=[
-            dict(type="buttons", showactive=False, x=0.0, y=0, xanchor="right",
-                 yanchor="top", buttons=[
-                     dict(label="▶ Play", method="animate", args=[None, dict(
-                         frame=dict(duration=40, redraw=True), fromcurrent=True,
-                         transition=dict(duration=0))]),
-                     dict(label="⏸ Pause", method="animate", args=[[None], dict(
-                         frame=dict(duration=0, redraw=False), mode="immediate")]),
-                 ]),
-        ],
-        sliders=[dict(active=0, y=0, x=0.05, len=0.6,
-                      currentvalue=dict(prefix="frame "),
-                      steps=[dict(method="animate", label=str(f),
-                                  args=[[str(f)], dict(mode="immediate",
-                                        frame=dict(duration=0, redraw=True))])
-                             for f in frames_idx])],
+        margin=dict(l=0, r=0, t=50, b=0),
+        title=(f"Joint work on the body — {arm}-handed pitcher "
+               f"(warm = more energy generated vs dataset)"),
+        coloraxis=dict(colorscale=theme.DIVERGING, cmin=-3, cmax=3,
+                       colorbar=dict(title="work z")),
+        scene=dict(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
+                   zaxis_title="Z up (m)",
+                   xaxis=dict(backgroundcolor="#fafafa"),
+                   yaxis=dict(backgroundcolor="#fafafa"),
+                   zaxis=dict(backgroundcolor="#f2f2f2"),
+                   camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))),
     )
     return fig
 
@@ -759,7 +769,8 @@ _PAGE = """<!DOCTYPE html>
 </div>
 <div class="picker" id="pickerbar">Pitch:
   <select id="pitch-picker" onchange="pickPitch(this.value)">{options}</select>
-  <span style="color:#888">— applies to the Live delivery and Joint work tabs</span>
+  <span style="color:#888">— applies to the Live delivery, Joint work, and
+    Efficiency tabs</span>
 </div>
 <div id="live" class="tabcontent">{live_panels}</div>
 <div id="work" class="tabcontent" style="display:none">{work_panels}</div>
@@ -813,10 +824,17 @@ def _pitch_figures(ds, trained, sp, step, top_n, eff_model=None):
     }
     try:
         jw = jk.load_joint_work(sp)
-        figs["jwpose"] = build_jointwork_pose_figure(markers, jw, vecs,
-                                                     frame_times, step)
+        zwork = jk.work_zscores(sp)
         figs["jwt"] = build_jointwork_time_figure(jw, frame_times)
-        figs["jwz"] = build_jointwork_z_figure(jk.work_zscores(sp))
+        figs["jwz"] = build_jointwork_z_figure(zwork)
+        # 3D body coloured by joint work at ball release (no stick figure).
+        try:
+            br = jw.events.get("br")
+            t = jw.time[-1] if br is None else br
+            figs["jwbody"] = build_jointwork_body_figure(
+                jk.joint_positions_at(sp, t), zwork, handed)
+        except Exception:
+            pass
     except KeyError:
         pass
     if eff_model is not None:
@@ -868,11 +886,11 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
             f"<div class='row'><div>{velo}</div><div>{zbio}</div></div></div>"
         )
         if "jwt" in figs:
-            pose_html = (emit(figs["jwpose"], f"jwpose-{sp}")
-                         if figs.get("jwpose") is not None else "")
+            body_html = (emit(figs["jwbody"], f"jwbody-{sp}")
+                         if figs.get("jwbody") is not None else "")
             jwt = emit(figs["jwt"], f"jwt-{sp}")
             jwz = emit(figs["jwz"], f"jwz-{sp}")
-            wbody = (f"{pose_html}"
+            wbody = (f"{body_html}"
                      f"<div class='row'><div>{jwt}</div><div>{jwz}</div></div>")
         else:
             wbody = "<p>No joint-work data for this pitch.</p>"

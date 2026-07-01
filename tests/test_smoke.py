@@ -139,32 +139,30 @@ def test_efficiency_rewards_drive_and_penalizes_elbow():
     assert model.score("efficient").score > model.score("arm_reliant").score
 
 
-def test_jointwork_pose_figure_is_work_colored_without_skeleton():
-    import c3d_plot
+def test_jointwork_body_figure_is_work_colored_without_stick_figure():
+    import pandas as pd
+
     import dashboard_html as dh
-    import joint_kinetics as jk
+    import theme
 
     rng = np.random.default_rng(1)
-    labels = ["RTOE", "LTOE", "RHEE", "LHEE", "RANK", "LANK"]
-    n = 40
-    pts = np.zeros((n, len(labels), 3))
-    for i in range(len(labels)):
-        pts[:, i, :] = rng.normal(0, 0.1, (n, 3)) + np.array([i * 0.1, 0, 0.05])
-    markers = c3d_plot.C3DMarkers(points=pts, labels=labels, rate=100.0)
-    ft = np.arange(n) / markers.rate
+    joints = ["shoulder", "elbow", "wrist", "hand", "glove_shoulder",
+              "glove_elbow", "glove_wrist", "glove_hand", "lead_hip", "lead_knee",
+              "lead_ankle", "rear_hip", "rear_knee", "rear_ankle"]
+    positions = {j: rng.normal(0, 0.5, 3) + np.array([0, 0, 1.0])
+                 for j in joints}
+    zwork = pd.DataFrame({
+        "joint": ["shoulder", "elbow", "lead_hip", "lead_knee", "rear_hip",
+                  "rear_knee", "glove_shoulder", "glove_elbow"],
+        "work_J": rng.normal(500, 200, 8),
+        "z": rng.normal(0, 1, 8),
+    })
 
-    work = {j: np.cumsum(rng.normal(1, 0.5, n)) for j in jk.ENERGY_JOINTS}
-    power = {j: np.gradient(w, ft) for j, w in work.items()}
-    jw = jk.JointWork("p0", ft.copy(), work, power, {"br": float(ft[-2])})
-    vecs = {}
-    for k, joint in enumerate(jk.VECTOR_JOINTS):
-        pos = rng.normal(0, 0.5, (n, 3)) + np.array([0, 0, 1 + 0.05 * k])
-        vecs[joint] = {"pos": pos, "vel": np.gradient(pos, ft, axis=0)}
-
-    fig = dh.build_jointwork_pose_figure(markers, jw, vecs, ft, step=4)
-    assert fig is not None and len(fig.frames) > 0
-    names = {getattr(t, "name", None) for t in fig.data}
-    assert "joint work" in names          # work-colored joints present
-    assert "skeleton" not in names        # plain stick figure removed
-    # No data if positions/work are missing.
-    assert dh.build_jointwork_pose_figure(markers, jw, {}, ft, step=4) is None
+    fig = dh.build_jointwork_body_figure(positions, zwork, "R")
+    assert fig is not None and len(fig.data) > 0
+    # The work colour axis carries the figure (limbs/joints shaded by work z)...
+    assert fig.layout.coloraxis.colorscale is not None
+    # ...and no full C3D stick-figure skeleton (theme.SLATE lines) is overlaid.
+    slate_lines = [t for t in fig.data
+                   if getattr(getattr(t, "line", None), "color", None) == theme.SLATE]
+    assert slate_lines == []

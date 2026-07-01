@@ -1,19 +1,24 @@
 ---
 title: OpenBiomechanics Pitching Dashboard
 emoji: ⚾
-colorFrom: orange
+colorFrom: yellow
 colorTo: gray
 sdk: gradio
+sdk_version: 6.19.0
+python_version: "3.12"
 app_file: app.py
 pinned: false
 license: cc-by-nc-sa-4.0
+short_description: Pick any pitcher and explore their biomechanics & velocity.
 ---
 
 # Driveline Pitching — 3D C3D Plotter
 
 [![CI](https://github.com/treychase/driveline-pitching/actions/workflows/ci.yml/badge.svg)](https://github.com/treychase/driveline-pitching/actions/workflows/ci.yml)
-[![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces)
+[![Hugging Face Space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-blue)](https://huggingface.co/spaces/treychase/driveline-pitching)
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+
+> **▶️ Try it live:** **[huggingface.co/spaces/treychase/driveline-pitching](https://huggingface.co/spaces/treychase/driveline-pitching)** — pick any pitcher from the dropdown and explore their delivery, velocity prediction, and biomechanics. No install required.
 
 A small, dependency-light Python module for **loading and plotting C3D
 motion-capture files in 3D**, built for the
@@ -208,11 +213,12 @@ selects the delivery. There are five tabs:
   * two **foot-vGRF squares** (L/R) that show each foot's force every frame and
     **flash red ("◀ MAX") at that foot's peak**;
   * the velocity gauge and the biomechanics z-scores.
-* **Joint work** — a **3D delivery colored by joint work**: the kinetic chain is
-  drawn as work-colored bones and joint markers (red = generating energy, blue =
-  absorbing), with a colour bar in Joules and **no plain stick-figure overlay** —
-  the colour itself carries the work. Below it, joint work accumulated during the
-  delivery and the **z-scores of joint work** (energy generated) for the pitch.
+* **Joint work** — a **3D body colored by joint work** (the pose at ball
+  release): each limb and joint is shaded by its energy generated vs. the dataset
+  (warm = more, cool = less), and the plain gray C3D stick figure is **not**
+  overlaid, so the color itself carries the work. Below it, joint work
+  accumulated during the delivery and the **z-scores of joint work** for the
+  pitch.
 * **Efficiency** — a **mechanical efficiency score** (0–100 dataset percentile):
   how much mechanical energy the **torso and lower body** generate relative to
   the load on the **throwing elbow** (see below), with a gauge and a signed
@@ -323,10 +329,26 @@ export OBP_HF_DATASET=your-name/openbiomechanics-pitching   # dashboard now sour
 ### Deploy as a HuggingFace Space
 
 `app.py` is a [Gradio](https://gradio.app) app exposing the four dashboard tabs
-(Live delivery, Joint work, Model diagnostics, Glossary). This repository is a
-ready-to-deploy **HuggingFace Space** (see the YAML front-matter at the top of
-this file: `sdk: gradio`, `app_file: app.py`). Push the repo to a Space, or run
-it locally:
+(Live delivery, Joint work, Model diagnostics, Glossary). Instead of baking in a
+fixed set of pitches, the app starts with a **two-step picker** — choose a
+**pitcher** (searchable; each entry shows handedness, playing level, pitch
+count, and velocity range), then one of **that pitcher's pitches** — so the
+whole dataset is browsable without rebuilding anything.
+
+This repository is a ready-to-deploy **HuggingFace Space**: the YAML
+front-matter at the top of this file declares `sdk: gradio`,
+`sdk_version: 6.19.0`, `python_version: "3.12"`, and `app_file: app.py`, so the
+Space runtime installs Gradio and runs `app.py` automatically, then installs
+`requirements.txt` for the rest. Deploy it by pushing this repo to a Space:
+
+```bash
+# One-time: create a Gradio Space named "driveline-pitching", then point a
+# git remote at it and push (uses your HuggingFace credentials / token).
+git remote add space https://huggingface.co/spaces/treychase/driveline-pitching
+git push space HEAD:main
+```
+
+Or run it locally:
 
 ```bash
 pip install -r requirements.txt gradio        # gradio only needed for the app
