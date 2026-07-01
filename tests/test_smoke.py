@@ -5,8 +5,8 @@ import numpy as np
 
 def test_all_modules_import():
     import bayesian_lasso, c3d_plot, dashboard, dashboard_html  # noqa: F401
-    import data_sources, force_plate, glossary, joint_kinetics  # noqa: F401
-    import mound, theme, velocity_model  # noqa: F401
+    import data_sources, efficiency, force_plate, glossary  # noqa: F401
+    import joint_kinetics, mound, theme, velocity_model  # noqa: F401
 
 
 def test_bayesian_lasso_recovers_sparse_signal():
@@ -83,3 +83,88 @@ def test_data_sources_describe():
 
     assert "cache" in data_sources.describe()
     assert data_sources.OBP_BASE.startswith("https://")
+
+
+def _synthetic_poi(n=60, seed=0):
+    import pandas as pd
+
+    import efficiency
+
+    rng = np.random.default_rng(seed)
+    cols = (efficiency.LOWER_BODY_DRIVERS + efficiency.TORSO_DRIVERS
+            + efficiency.ELBOW_LOAD)
+    data = {c: rng.normal(100, 20, n) for c in cols}
+    data["session_pitch"] = [f"p{i}" for i in range(n)]
+    return pd.DataFrame(data)
+
+
+def test_efficiency_model_scores_and_ranks():
+    import efficiency
+
+    poi = _synthetic_poi()
+    model = efficiency.MechanicalEfficiencyModel.fit(poi)
+
+    res = model.score("p0")
+    assert 0.0 <= res.score <= 100.0
+    # signed_z negates the elbow-load term so "+ helps efficiency" holds.
+    load_row = res.contributions[res.contributions.group == "elbow_load"].iloc[0]
+    assert load_row["signed_z"] == -load_row["z"]
+    # raw index equals torso/lower-body drive minus elbow load.
+    assert abs(res.raw - (res.drive - res.elbow_load)) < 1e-9
+
+    summary = model.summary()
+    assert len(summary) == len(poi)
+    assert summary["score"].between(0, 100).all()
+
+
+def test_efficiency_rewards_drive_and_penalizes_elbow():
+    import pandas as pd
+
+    import efficiency
+
+    poi = _synthetic_poi()
+    # Craft two contrasting pitches: an efficient one (high drive, low elbow
+    # load) and an arm-reliant one (low drive, high elbow load).
+    hi_drive = {c: 200.0 for c in efficiency.LOWER_BODY_DRIVERS
+                + efficiency.TORSO_DRIVERS}
+    hi_drive[efficiency.ELBOW_LOAD[0]] = 40.0
+    hi_drive["session_pitch"] = "efficient"
+    lo_drive = {c: 40.0 for c in efficiency.LOWER_BODY_DRIVERS
+                + efficiency.TORSO_DRIVERS}
+    lo_drive[efficiency.ELBOW_LOAD[0]] = 200.0
+    lo_drive["session_pitch"] = "arm_reliant"
+    poi = pd.concat([poi, pd.DataFrame([hi_drive, lo_drive])], ignore_index=True)
+
+    model = efficiency.MechanicalEfficiencyModel.fit(poi)
+    assert model.score("efficient").score > model.score("arm_reliant").score
+
+
+def test_jointwork_pose_figure_is_work_colored_without_skeleton():
+    import c3d_plot
+    import dashboard_html as dh
+    import joint_kinetics as jk
+
+    rng = np.random.default_rng(1)
+    labels = ["RTOE", "LTOE", "RHEE", "LHEE", "RANK", "LANK"]
+    n = 40
+    pts = np.zeros((n, len(labels), 3))
+    for i in range(len(labels)):
+        pts[:, i, :] = rng.normal(0, 0.1, (n, 3)) + np.array([i * 0.1, 0, 0.05])
+    markers = c3d_plot.C3DMarkers(points=pts, labels=labels, rate=100.0)
+    ft = np.arange(n) / markers.rate
+
+    work = {j: np.cumsum(rng.normal(1, 0.5, n)) for j in jk.ENERGY_JOINTS}
+    power = {j: np.gradient(w, ft) for j, w in work.items()}
+    jw = jk.JointWork("p0", ft.copy(), work, power, {"br": float(ft[-2])})
+    vecs = {}
+    for k, joint in enumerate(jk.VECTOR_JOINTS):
+        pos = rng.normal(0, 0.5, (n, 3)) + np.array([0, 0, 1 + 0.05 * k])
+        vecs[joint] = {"pos": pos, "vel": np.gradient(pos, ft, axis=0)}
+
+    fig = dh.build_jointwork_pose_figure(markers, jw, vecs, ft, step=4)
+    assert fig is not None and len(fig.frames) > 0
+    names = {getattr(t, "name", None) for t in fig.data}
+    assert "joint work" in names          # work-colored joints present
+    assert "skeleton" not in names        # plain stick figure removed
+    # No data if positions/work are missing.
+    assert dh.build_jointwork_pose_figure(markers, jw, {}, ft, step=4) is None

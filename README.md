@@ -196,8 +196,8 @@ for row in trained.model.coef_summary(trained.dataset.feature_names)[:10]:
 `dashboard_html.py` builds a **self-contained interactive HTML dashboard**. The
 **shell** (header, tabs, pitch picker, buttons) uses an orange theme; the
 **plots stay neutral** so colour carries data, not branding (`theme.py`). A
-**pitch picker** (applies to the Live delivery and Joint work tabs) selects the
-delivery. There are four tabs:
+**pitch picker** (applies to the Live delivery, Joint work, and Efficiency tabs)
+selects the delivery. There are five tabs:
 
 * **Live delivery** — a Plotly animation of the 3D pose on the dirt mound with a
   Play button, a frame slider, and a **toggle for joint velocity vectors** on
@@ -208,8 +208,15 @@ delivery. There are four tabs:
   * two **foot-vGRF squares** (L/R) that show each foot's force every frame and
     **flash red ("◀ MAX") at that foot's peak**;
   * the velocity gauge and the biomechanics z-scores.
-* **Joint work** — joint work accumulated during the delivery and the
-  **z-scores of joint work** (energy generated) for the selected pitch.
+* **Joint work** — a **3D delivery colored by joint work**: the kinetic chain is
+  drawn as work-colored bones and joint markers (red = generating energy, blue =
+  absorbing), with a colour bar in Joules and **no plain stick-figure overlay** —
+  the colour itself carries the work. Below it, joint work accumulated during the
+  delivery and the **z-scores of joint work** (energy generated) for the pitch.
+* **Efficiency** — a **mechanical efficiency score** (0–100 dataset percentile):
+  how much mechanical energy the **torso and lower body** generate relative to
+  the load on the **throwing elbow** (see below), with a gauge and a signed
+  contribution breakdown.
 * **Model diagnostics** — Bayesian-Lasso diagnostics: predicted vs. actual
   (train/test, selected pitches highlighted), residuals, the **posterior
   coefficients with 95% credible intervals**, and the posterior distributions of
@@ -256,6 +263,37 @@ joint_kinetics.load_joint_vectors("1097_1", frame_times)  # joint-centre velocit
 # Glossary of every variable (definition, units, event, category)
 glossary.lookup("elbow_varus_moment").definition
 glossary.as_dataframe()                                 # all 81 variables as a table
+```
+
+### Mechanical efficiency model
+
+`efficiency.py` scores *how* a pitcher makes velocity: how much mechanical energy
+comes from the big, durable engines — the **torso** and **lower body** (hips and
+knees) — relative to the load placed on the fragile **throwing elbow**. Velocity
+can be bought by driving from the ground up (an efficient, arm-friendly pattern)
+or by cranking on the arm and paying for it in elbow valgus torque (a fragile
+one); this model turns that trade-off into a single 0–100 score.
+
+The raw index is `raw = drive_z − elbow_load_z`, where `drive_z` averages the
+standardized **torso** (`pelvis_lumbar_transfer_fp_br`, `thorax_distal_transfer_fp_br`)
+and **lower-body** (`rear_hip`/`rear_knee`/`lead_hip`/`lead_knee` energy
+generation) groups, and `elbow_load_z` is the standardized `elbow_varus_moment`
+(the medial-elbow/UCL load). It is high when a pitcher drives hard with the trunk
+and legs **and** spares the elbow. `raw` is then mapped to its **percentile
+within the dataset** so the number is interpretable across pitchers. All inputs
+come from `poi_metrics.csv`, so no extra downloads are needed.
+
+```python
+import efficiency, velocity_model
+
+ds = velocity_model.load_dataset()
+model = efficiency.MechanicalEfficiencyModel.fit(ds.poi)
+res = model.score("1097_1")
+res.score        # e.g. 82.0  (dataset percentile)
+res.drive        # torso + lower-body drive z
+res.elbow_load   # elbow varus-moment z (higher = more elbow stress)
+res.verdict()    # human-readable interpretation
+res.contributions  # per-metric signed breakdown (+ = helps efficiency)
 ```
 
 Force plates (`rear_force_*`, `lead_force_*`, ~1080 Hz) come from

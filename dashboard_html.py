@@ -323,6 +323,198 @@ def build_jointwork_z_figure(zwork):
                  hover_extra=[f"work = {w:.0f} J" for w in sub["work_J"]])
 
 
+# --------------------------------------------------------------------------- #
+# Work-coloured 3D pose (Joint work tab): body coloured by energy generated,
+# with no plain stick-figure overlay.
+# --------------------------------------------------------------------------- #
+
+# Kinetic-chain bones: (jointA, jointB, colour_joint). jointA/jointB are
+# landmark keys from joint_kinetics.VECTOR_JOINTS; colour_joint is the energy
+# joint whose cumulative work colours the bone.
+_WORK_BONES = [
+    ("rear_ankle", "rear_knee", "rear_knee"),
+    ("rear_knee", "rear_hip", "rear_hip"),
+    ("rear_hip", "lead_hip", "rear_hip"),          # pelvis
+    ("lead_hip", "lead_knee", "lead_knee"),
+    ("lead_knee", "lead_ankle", "lead_knee"),
+    ("rear_hip", "shoulder", "shoulder"),          # trunk
+    ("lead_hip", "shoulder", "shoulder"),
+    ("shoulder", "elbow", "shoulder"),
+    ("elbow", "wrist", "elbow"),
+    ("wrist", "hand", "elbow"),
+    ("shoulder", "glove_shoulder", "glove_shoulder"),
+    ("glove_shoulder", "glove_elbow", "glove_shoulder"),
+    ("glove_elbow", "glove_wrist", "glove_elbow"),
+    ("glove_wrist", "glove_hand", "glove_elbow"),
+]
+# Energy joints drawn as large work-coloured markers.
+_WORK_MARKER_JOINTS = ["rear_hip", "rear_knee", "lead_hip", "lead_knee",
+                       "shoulder", "elbow", "glove_shoulder", "glove_elbow"]
+# Structural joints (no work signal) drawn small/neutral to complete the body.
+_STRUCT_JOINTS = ["rear_ankle", "lead_ankle", "wrist", "hand",
+                  "glove_wrist", "glove_hand"]
+
+
+def _hex2rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[k:k + 2], 16) for k in (0, 2, 4))
+
+
+def _diverging_rgb(val, vmax):
+    """Map a work value to an rgb() string on the blue-white-red scale."""
+    if not np.isfinite(val) or vmax <= 0:
+        return "rgb(200,200,200)"
+    t = 0.5 + 0.5 * float(np.clip(val / vmax, -1.0, 1.0))
+    for (f0, c0), (f1, c1) in zip(theme.DIVERGING, theme.DIVERGING[1:]):
+        if t <= f1 or f1 == theme.DIVERGING[-1][0]:
+            a = (t - f0) / (f1 - f0) if f1 > f0 else 0.0
+            r0, r1 = _hex2rgb(c0), _hex2rgb(c1)
+            rgb = tuple(int(round(r0[k] + a * (r1[k] - r0[k]))) for k in range(3))
+            return f"rgb{rgb}"
+    return "rgb(200,200,200)"
+
+
+def _work_marker_data(vecs, joints, work_f, fi):
+    xs, ys, zs, cs, names = [], [], [], [], []
+    for j in joints:
+        p = vecs[j]["pos"][fi]
+        if not np.isfinite(p).all():
+            continue
+        xs.append(p[0]); ys.append(p[1]); zs.append(p[2])
+        cs.append(float(work_f[j][fi]))
+        names.append(j.replace("_", " "))
+    return xs, ys, zs, cs, names
+
+
+def _struct_marker_data(vecs, joints, fi):
+    xs, ys, zs = [], [], []
+    for j in joints:
+        p = vecs[j]["pos"][fi]
+        if np.isfinite(p).all():
+            xs.append(p[0]); ys.append(p[1]); zs.append(p[2])
+    return xs, ys, zs
+
+
+def build_jointwork_pose_figure(markers, jw, vecs, frame_times, step, mound=True):
+    """Animated 3D pose coloured by joint work (energy generated), no skeleton.
+
+    The kinetic chain is drawn as work-coloured bones and joint markers — red =
+    generating energy, blue = absorbing — with a colour bar in Joules. The plain
+    grey stick figure is intentionally omitted so colour carries the work.
+
+    Returns ``None`` if joint-centre positions (``vecs``) or joint work are
+    unavailable for this pitch.
+    """
+    import plotly.graph_objects as go
+    import mound as mound_mod
+
+    if not vecs or not jw.work:
+        return None
+
+    # Cumulative work per energy joint, interpolated onto the animation frames.
+    work_f = {j: np.interp(frame_times, jw.time, w) for j, w in jw.work.items()}
+    vmax = max((float(np.nanmax(np.abs(w))) for w in work_f.values()), default=1.0)
+    vmax = vmax or 1.0
+
+    bones = [(a, b, cj) for (a, b, cj) in _WORK_BONES
+             if a in vecs and b in vecs and cj in work_f]
+    marker_joints = [j for j in _WORK_MARKER_JOINTS if j in vecs and j in work_f]
+    struct_joints = [j for j in _STRUCT_JOINTS if j in vecs]
+    if not bones and not marker_joints:
+        return None
+
+    frames_idx = list(range(0, markers.n_frames, step))
+    f0 = frames_idx[0]
+
+    fig = go.Figure()
+    # 0: mound (static context)
+    if mound:
+        mx, my, mz, mi, mj, mk, inten, _ = mound_mod.mound_trimesh(markers)
+        fig.add_trace(go.Mesh3d(x=mx, y=my, z=mz, i=mi, j=mj, k=mk, intensity=inten,
+                                colorscale=_DIRT_SCALE, showscale=False, opacity=1.0,
+                                lighting=dict(ambient=0.6, diffuse=0.8, roughness=0.9),
+                                hoverinfo="skip"))
+
+    # Bones (one trace each so they can be coloured individually per frame).
+    bone_start = len(fig.data)
+    for a, b, cj in bones:
+        pa, pb = vecs[a]["pos"][f0], vecs[b]["pos"][f0]
+        fig.add_trace(go.Scatter3d(
+            x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]], mode="lines",
+            line=dict(color=_diverging_rgb(work_f[cj][f0], vmax), width=9),
+            hoverinfo="skip", showlegend=False))
+
+    # Energy-joint markers, coloured by work (carries the colour bar).
+    ex, ey, ez, ec, enames = _work_marker_data(vecs, marker_joints, work_f, f0)
+    emarker_idx = len(fig.data)
+    fig.add_trace(go.Scatter3d(
+        x=ex, y=ey, z=ez, mode="markers",
+        marker=dict(size=9, color=ec, colorscale=theme.DIVERGING,
+                    cmin=-vmax, cmax=vmax, line=dict(color="#444", width=1),
+                    colorbar=dict(title="energy<br>generated (J)", thickness=12,
+                                  len=0.6)),
+        customdata=np.array(ec).reshape(-1, 1), text=enames,
+        hovertemplate="%{text}<br>work = %{customdata[0]:.0f} J<extra></extra>",
+        name="joint work"))
+
+    # Structural joints (ankles, wrists, hands) — neutral, complete the shape.
+    sx, sy, sz = _struct_marker_data(vecs, struct_joints, f0)
+    smarker_idx = len(fig.data)
+    fig.add_trace(go.Scatter3d(
+        x=sx, y=sy, z=sz, mode="markers",
+        marker=dict(size=4, color=theme.PLOT_MUTED), hoverinfo="skip",
+        showlegend=False))
+
+    # Frames
+    anim_frames = []
+    animated = list(range(bone_start, bone_start + len(bones))) + \
+        [emarker_idx, smarker_idx]
+    for f in frames_idx:
+        data = []
+        for a, b, cj in bones:
+            pa, pb = vecs[a]["pos"][f], vecs[b]["pos"][f]
+            data.append(go.Scatter3d(
+                x=[pa[0], pb[0]], y=[pa[1], pb[1]], z=[pa[2], pb[2]],
+                line=dict(color=_diverging_rgb(work_f[cj][f], vmax), width=9)))
+        ex, ey, ez, ec, _n = _work_marker_data(vecs, marker_joints, work_f, f)
+        data.append(go.Scatter3d(x=ex, y=ey, z=ez,
+                                 marker=dict(color=ec, cmin=-vmax, cmax=vmax),
+                                 customdata=np.array(ec).reshape(-1, 1)))
+        sx, sy, sz = _struct_marker_data(vecs, struct_joints, f)
+        data.append(go.Scatter3d(x=sx, y=sy, z=sz))
+        anim_frames.append(go.Frame(name=str(f), data=data, traces=animated))
+    fig.frames = anim_frames
+
+    fig.update_scenes(aspectmode="data", xaxis_title="X (m)", yaxis_title="Y (m)",
+                      zaxis_title="Z up (m)",
+                      xaxis=dict(backgroundcolor="#fafafa"),
+                      yaxis=dict(backgroundcolor="#fafafa"),
+                      zaxis=dict(backgroundcolor="#f2f2f2"),
+                      camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)))
+    fig.update_layout(
+        template=theme.plotly_template(), height=560,
+        margin=dict(l=0, r=0, t=40, b=0),
+        title="Delivery coloured by joint work — red generates, blue absorbs",
+        updatemenus=[
+            dict(type="buttons", showactive=False, x=0.0, y=0, xanchor="right",
+                 yanchor="top", buttons=[
+                     dict(label="▶ Play", method="animate", args=[None, dict(
+                         frame=dict(duration=40, redraw=True), fromcurrent=True,
+                         transition=dict(duration=0))]),
+                     dict(label="⏸ Pause", method="animate", args=[[None], dict(
+                         frame=dict(duration=0, redraw=False), mode="immediate")]),
+                 ]),
+        ],
+        sliders=[dict(active=0, y=0, x=0.05, len=0.6,
+                      currentvalue=dict(prefix="frame "),
+                      steps=[dict(method="animate", label=str(f),
+                                  args=[[str(f)], dict(mode="immediate",
+                                        frame=dict(duration=0, redraw=True))])
+                             for f in frames_idx])],
+    )
+    return fig
+
+
 def build_jointwork_time_figure(jw, frame_times):
     import plotly.graph_objects as go
 
@@ -343,6 +535,85 @@ def build_jointwork_time_figure(jw, frame_times):
                       margin=dict(l=10, r=10, t=40, b=30),
                       title="Joint work accumulated during the delivery (J)",
                       xaxis_title="time (s)", yaxis_title="energy generated (J)")
+    return fig
+
+
+# Green (helps efficiency) -> white -> red (hurts) diverging scale for the
+# efficiency contribution breakdown.
+_EFF_SCALE = [[0.0, "#b2182b"], [0.5, "#f7f7f7"], [1.0, "#1a9850"]]
+_EFF_LABELS = {
+    "rear_hip_generation_pkh_fp": "rear hip generation",
+    "rear_knee_generation_pkh_fp": "rear knee generation",
+    "lead_hip_generation_fp_br": "lead hip generation",
+    "lead_knee_generation_fp_br": "lead knee generation",
+    "pelvis_lumbar_transfer_fp_br": "pelvis→lumbar transfer",
+    "thorax_distal_transfer_fp_br": "thorax (trunk) transfer",
+    "elbow_varus_moment": "elbow varus moment (load)",
+}
+_GROUP_LABEL = {"lower_body": "lower body", "torso": "torso",
+                "elbow_load": "elbow load"}
+
+
+def build_efficiency_figure(res):
+    """Gauge (0-100 score) + signed contribution breakdown for one pitch.
+
+    ``res`` is an :class:`efficiency.EfficiencyScore`. The gauge shows the
+    dataset percentile; the bars show each metric's standardized contribution,
+    signed so that green/positive always *helps* efficiency (drivers up, elbow
+    load down).
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=2, cols=1, row_heights=[0.42, 0.58], vertical_spacing=0.14,
+        specs=[[{"type": "indicator"}], [{"type": "xy"}]],
+        subplot_titles=("", "Contributions (green = helps, red = hurts)"),
+    )
+
+    # Colour the gauge bar by how good the score is.
+    bar_color = (theme.ORANGE if res.score >= 45 else theme.PLOT_ACCENT)
+    fig.add_trace(go.Indicator(
+        mode="gauge+number", value=res.score,
+        number=dict(suffix=" / 100", font=dict(size=34)),
+        title=dict(text="Mechanical efficiency<br>"
+                        "<span style='font-size:0.75em;color:gray'>"
+                        "torso + lower-body drive vs. throwing-elbow load "
+                        "(dataset percentile)</span>"),
+        gauge=dict(
+            axis=dict(range=[0, 100]),
+            bar=dict(color=bar_color),
+            steps=[dict(range=[0, 45], color="#fde3e1"),
+                   dict(range=[45, 75], color="#fff3e6"),
+                   dict(range=[75, 100], color="#e5f4e6")],
+            threshold=dict(line=dict(color=theme.SLATE, width=3), value=50),
+        ),
+    ), row=1, col=1)
+
+    # Contribution bars, ordered drivers (top) then elbow load (bottom).
+    contrib = res.contributions
+    order = {"lower_body": 0, "torso": 1, "elbow_load": 2}
+    contrib = contrib.iloc[
+        contrib["group"].map(order).argsort(kind="stable")
+    ].iloc[::-1]
+    labels = [f"{_EFF_LABELS.get(m, m)}" for m in contrib["metric"]]
+    signed = contrib["signed_z"].to_numpy()
+    fig.add_trace(go.Bar(
+        x=signed, y=labels, orientation="h",
+        marker=dict(color=signed, colorscale=_EFF_SCALE, cmin=-3, cmax=3,
+                    line=dict(color="#ccc", width=0.5)),
+        customdata=np.stack([contrib["group"].map(_GROUP_LABEL),
+                             contrib["z"], contrib["value"]], axis=-1),
+        hovertemplate=("%{y} (%{customdata[0]})<br>z=%{customdata[1]:+.2f}, "
+                       "value=%{customdata[2]:.1f}<br>"
+                       "contribution=%{x:+.2f}<extra></extra>"),
+    ), row=2, col=1)
+    fig.update_xaxes(title_text="standardized contribution (σ)", range=[-3, 3],
+                     zeroline=True, zerolinecolor="#999", zerolinewidth=1,
+                     row=2, col=1)
+    fig.update_yaxes(automargin=True, row=2, col=1)
+    fig.update_layout(template=theme.plotly_template(), height=560,
+                      margin=dict(l=10, r=10, t=60, b=40), showlegend=False)
     return fig
 
 
@@ -481,6 +752,7 @@ _PAGE = """<!DOCTYPE html>
   <button class="tablink active" id="b-live" onclick="showTab('live')">
     Live delivery</button>
   <button class="tablink" id="b-work" onclick="showTab('work')">Joint work</button>
+  <button class="tablink" id="b-eff" onclick="showTab('eff')">Efficiency</button>
   <button class="tablink" id="b-diag" onclick="showTab('diag')">
     Model diagnostics</button>
   <button class="tablink" id="b-gloss" onclick="showTab('gloss')">Glossary</button>
@@ -491,17 +763,18 @@ _PAGE = """<!DOCTYPE html>
 </div>
 <div id="live" class="tabcontent">{live_panels}</div>
 <div id="work" class="tabcontent" style="display:none">{work_panels}</div>
+<div id="eff" class="tabcontent" style="display:none">{eff_panels}</div>
 <div id="diag" class="tabcontent" style="display:none">{diag}</div>
 <div id="gloss" class="tabcontent" style="display:none">{glossary}</div>
 <script>
-var TABS = ['live', 'work', 'diag', 'gloss'];
+var TABS = ['live', 'work', 'eff', 'diag', 'gloss'];
 function showTab(id) {{
   TABS.forEach(function(t) {{
     document.getElementById(t).style.display = (t===id) ? 'block' : 'none';
     document.getElementById('b-'+t).classList.toggle('active', t===id);
   }});
   document.getElementById('pickerbar').style.display =
-    (id==='live' || id==='work') ? 'block' : 'none';
+    (id==='live' || id==='work' || id==='eff') ? 'block' : 'none';
   window.dispatchEvent(new Event('resize'));
 }}
 function pickPitch(sp) {{
@@ -515,7 +788,7 @@ function pickPitch(sp) {{
 """
 
 
-def _pitch_figures(ds, trained, sp, step, top_n):
+def _pitch_figures(ds, trained, sp, step, top_n, eff_model=None):
     """Build all figures for one pitch; return (figs_in_order, head_text)."""
     predicted, pred_std = trained.predict_pitch(sp)
     actual = ds.actual_velocity(sp)
@@ -540,10 +813,17 @@ def _pitch_figures(ds, trained, sp, step, top_n):
     }
     try:
         jw = jk.load_joint_work(sp)
+        figs["jwpose"] = build_jointwork_pose_figure(markers, jw, vecs,
+                                                     frame_times, step)
         figs["jwt"] = build_jointwork_time_figure(jw, frame_times)
         figs["jwz"] = build_jointwork_z_figure(jk.work_zscores(sp))
     except KeyError:
         pass
+    if eff_model is not None:
+        try:
+            figs["eff"] = build_efficiency_figure(eff_model.score(sp))
+        except KeyError:
+            pass
     tag = "out-of-sample" if in_test else "in-sample"
     head = (f"Pitch {sp} · {tag} · predicted {predicted:.1f} mph "
             f"(actual {actual:.1f}, error {predicted-actual:+.1f}) · "
@@ -557,6 +837,8 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
     if trained is None:
         trained = train_velocity_model()
     ds = trained.dataset
+    import efficiency
+    eff_model = efficiency.MechanicalEfficiencyModel.fit(ds.poi)
     if not pitches:
         seen, pitches = set(), []
         for idx in trained.test_idx:
@@ -573,9 +855,9 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
         state["first"] = False
         return fig.to_html(full_html=False, include_plotlyjs=inc, div_id=div_id)
 
-    live_panels, work_panels, options = [], [], []
+    live_panels, work_panels, eff_panels, options = [], [], [], []
     for n, sp in enumerate(pitches):
-        figs, head = _pitch_figures(ds, trained, sp, step, top_n)
+        figs, head = _pitch_figures(ds, trained, sp, step, top_n, eff_model)
         anim = emit(figs["anim"], f"anim-{sp}")
         velo = emit(figs["velo"], f"velo-{sp}")
         zbio = emit(figs["zbio"], f"zbio-{sp}")
@@ -586,15 +868,29 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
             f"<div class='row'><div>{velo}</div><div>{zbio}</div></div></div>"
         )
         if "jwt" in figs:
+            pose_html = (emit(figs["jwpose"], f"jwpose-{sp}")
+                         if figs.get("jwpose") is not None else "")
             jwt = emit(figs["jwt"], f"jwt-{sp}")
             jwz = emit(figs["jwz"], f"jwz-{sp}")
-            wbody = f"<div class='row'><div>{jwt}</div><div>{jwz}</div></div>"
+            wbody = (f"{pose_html}"
+                     f"<div class='row'><div>{jwt}</div><div>{jwz}</div></div>")
         else:
             wbody = "<p>No joint-work data for this pitch.</p>"
         work_panels.append(
             f"<div class='pitch-panel' data-sp='{sp}' id='work-{sp}' "
             f"style='display:{disp}'><div class='pitch-head'>{head}</div>"
             f"<h2>Joint work — energy generated per joint</h2>{wbody}</div>"
+        )
+        if "eff" in figs:
+            eff = emit(figs["eff"], f"eff-{sp}")
+            ebody = (f"<div class='pitch-head'>{head}</div>"
+                     f"<h2>Mechanical efficiency — torso &amp; lower-body drive "
+                     f"vs. throwing-elbow load</h2>{eff}")
+        else:
+            ebody = "<p>No efficiency data for this pitch.</p>"
+        eff_panels.append(
+            f"<div class='pitch-panel' data-sp='{sp}' id='eff-{sp}' "
+            f"style='display:{disp}'>{ebody}</div>"
         )
         options.append(f"<option value='{sp}'>{sp}</option>")
 
@@ -611,8 +907,8 @@ def build_html(pitches=None, trained=None, step=4, top_n=18,
     page = _PAGE.format(
         r2=trained.metrics["r2"], rmse=trained.metrics["rmse"],
         options="".join(options), live_panels="".join(live_panels),
-        work_panels="".join(work_panels), diag=diag,
-        glossary=glossary.render_html(),
+        work_panels="".join(work_panels), eff_panels="".join(eff_panels),
+        diag=diag, glossary=glossary.render_html(),
     )
     with open(out, "w") as fh:
         fh.write(page)
